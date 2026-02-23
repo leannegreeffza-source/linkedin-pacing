@@ -5,22 +5,17 @@ import { useSession, signIn, signOut } from 'next-auth/react';
 import {
   TrendingUp, TrendingDown, DollarSign, RefreshCw,
   CheckCircle, AlertCircle, XCircle, Edit3, Save, X,
-  ChevronUp, ChevronDown, Users, Calendar, Target, Minus
+  ChevronUp, ChevronDown, Users, Calendar, Target, Minus, Search
 } from 'lucide-react';
 
 function fmt(n, decimals = 2) {
   if (n == null || isNaN(n)) return '0.00';
-  return Number(n).toLocaleString(undefined, {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
+  return Number(n).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 function fmtD(n) { return `$${fmt(n)}`; }
 function fmtR(n) { return `R${fmt(n)}`; }
 
-function getBudgetKey(year, month) {
-  return `pacing_budget_${year}_${month}`;
-}
+function getBudgetKey(year, month) { return `pacing_budget_${year}_${month}`; }
 function loadBudget(year, month) {
   try {
     const raw = localStorage.getItem(getBudgetKey(year, month));
@@ -37,6 +32,100 @@ function getPacingStatus(actual, ideal) {
   if (ratio >= 0.9 && ratio <= 1.1) return { label: 'On Track', color: 'emerald', icon: CheckCircle };
   if (ratio < 0.9) return { label: 'Under Pacing', color: 'yellow', icon: AlertCircle };
   return { label: 'Over Pacing', color: 'red', icon: XCircle };
+}
+
+// ── Reusable filter section ───────────────────────────────────────────────────
+function FilterSection({ title, icon: Icon, items, selectedIds, onToggle, loading,
+  searchValue, onSearchChange, onSelectFiltered, onDeselectFiltered,
+  totalCount, accentColor = 'blue', emptyMessage = 'No items found' }) {
+
+  const filtered = items.filter(item =>
+    !searchValue ||
+    item.name.toLowerCase().includes(searchValue.toLowerCase()) ||
+    String(item.id).includes(searchValue)
+  );
+  const selectedCount = selectedIds.length;
+
+  const colors = {
+    blue:    { badge: 'text-blue-400', selected: 'bg-blue-900/40 border-blue-600', btn: 'bg-blue-700 hover:bg-blue-600' },
+    purple:  { badge: 'text-purple-400', selected: 'bg-purple-900/40 border-purple-600', btn: 'bg-purple-700 hover:bg-purple-600' },
+    emerald: { badge: 'text-emerald-400', selected: 'bg-emerald-900/40 border-emerald-600', btn: 'bg-emerald-700 hover:bg-emerald-600' },
+  };
+  const c = colors[accentColor] || colors.blue;
+
+  return (
+    <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-2">
+          <Icon className="w-3.5 h-3.5" /> {title}
+        </h3>
+        {loading
+          ? <span className="text-xs text-slate-400 flex items-center gap-1"><RefreshCw className="w-3 h-3 animate-spin" /></span>
+          : <span className={`text-xs font-bold ${c.badge}`}>{selectedCount}/{totalCount || items.length}</span>
+        }
+      </div>
+
+      <div className="relative mb-2">
+        <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-slate-400" />
+        <input
+          type="text"
+          placeholder={`Search ${title.toLowerCase()}...`}
+          value={searchValue}
+          onChange={e => onSearchChange(e.target.value)}
+          className="w-full pl-8 pr-8 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+        />
+        {searchValue && (
+          <button onClick={() => onSearchChange('')} className="absolute right-2 top-1.5 text-slate-400 hover:text-white">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+
+      <div className="flex gap-2 mb-2">
+        <button onClick={() => onSelectFiltered(filtered)}
+          className={`flex-1 px-2 py-1 text-white rounded text-xs font-medium ${c.btn}`}>
+          {searchValue ? `Select (${filtered.length})` : 'All'}
+        </button>
+        <button onClick={() => onDeselectFiltered(filtered)}
+          className="flex-1 px-2 py-1 bg-slate-600 text-slate-300 rounded text-xs font-medium hover:bg-slate-500">
+          {searchValue ? `Deselect (${filtered.filter(i => selectedIds.includes(i.id)).length})` : 'None'}
+        </button>
+      </div>
+
+      {searchValue && (
+        <div className="text-xs text-slate-500 mb-2 px-1">
+          {filtered.length} of {items.length} shown
+        </div>
+      )}
+
+      <div className="space-y-1.5 max-h-52 overflow-y-auto pr-0.5">
+        {filtered.map(item => {
+          const selected = selectedIds.includes(item.id);
+          return (
+            <label key={item.id}
+              className={`flex items-start gap-2.5 p-2.5 rounded-lg cursor-pointer border transition-colors ${
+                selected ? `${c.selected} text-white` : 'border-slate-600 text-slate-400 hover:bg-slate-700'
+              }`}>
+              <input type="checkbox" checked={selected} onChange={() => onToggle(item.id)}
+                className="w-3.5 h-3.5 accent-blue-500 mt-0.5 flex-shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-semibold text-white truncate">{item.name}</div>
+                <div className="text-xs text-slate-500 font-mono">ID: {item.id}</div>
+                {item.status && item.status !== 'ACTIVE' && (
+                  <div className="text-xs text-slate-500">{item.status}</div>
+                )}
+              </div>
+            </label>
+          );
+        })}
+        {filtered.length === 0 && !loading && (
+          <p className="text-xs text-slate-500 text-center py-4">
+            {searchValue ? `No results for "${searchValue}"` : emptyMessage}
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function SignInScreen() {
@@ -73,7 +162,6 @@ function BudgetModal({ show, onClose, budget, onSave, month, year }) {
   useEffect(() => setForm(budget), [budget]);
   if (!show) return null;
   const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
-
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
       <div className="bg-slate-800 rounded-2xl w-full max-w-md border border-slate-700 shadow-2xl">
@@ -82,41 +170,30 @@ function BudgetModal({ show, onClose, budget, onSave, month, year }) {
             <h2 className="text-lg font-bold text-white">Edit Monthly Budget</h2>
             <p className="text-sm text-slate-400">{monthName} {year}</p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white">
-            <X className="w-5 h-5" />
-          </button>
+          <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-6 space-y-4">
           <div>
-            <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-2">
-              Total Budget (USD $)
-            </label>
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-2">Total Budget (USD $)</label>
             <div className="relative">
               <span className="absolute left-3 top-2.5 text-slate-400 font-bold">$</span>
-              <input type="number" step="0.01" placeholder="e.g. 10000"
-                value={form.totalUSD}
+              <input type="number" step="0.01" placeholder="e.g. 10000" value={form.totalUSD}
                 onChange={e => setForm(f => ({ ...f, totalUSD: e.target.value }))}
                 className="w-full pl-7 pr-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-lg font-bold focus:outline-none focus:border-blue-500" />
             </div>
           </div>
           <div>
-            <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-2">
-              Total Budget (ZAR R) — optional
-            </label>
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-2">Total Budget (ZAR R) — optional</label>
             <div className="relative">
               <span className="absolute left-3 top-2.5 text-slate-400 font-bold">R</span>
-              <input type="number" step="0.01" placeholder="e.g. 185000"
-                value={form.totalZAR}
+              <input type="number" step="0.01" placeholder="e.g. 185000" value={form.totalZAR}
                 onChange={e => setForm(f => ({ ...f, totalZAR: e.target.value }))}
                 className="w-full pl-7 pr-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-lg font-bold focus:outline-none focus:border-blue-500" />
             </div>
           </div>
           <div>
-            <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-2">
-              Budget Notes
-            </label>
-            <textarea placeholder="e.g. Q1 LinkedIn budget"
-              value={form.note}
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-2">Budget Notes</label>
+            <textarea placeholder="e.g. Q1 LinkedIn budget" value={form.note}
               onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
               rows={2}
               className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 resize-none" />
@@ -124,9 +201,7 @@ function BudgetModal({ show, onClose, budget, onSave, month, year }) {
         </div>
         <div className="flex gap-3 p-6 pt-0">
           <button onClick={onClose}
-            className="flex-1 px-4 py-2.5 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 font-medium text-sm">
-            Cancel
-          </button>
+            className="flex-1 px-4 py-2.5 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 font-medium text-sm">Cancel</button>
           <button onClick={() => { onSave(form); onClose(); }}
             className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm flex items-center justify-center gap-2">
             <Save className="w-4 h-4" /> Save Budget
@@ -143,16 +218,13 @@ function DailyChart({ dailyData, idealDailySpend }) {
 
   useEffect(() => {
     if (!dailyData || dailyData.length === 0) return;
-
     function renderChart() {
       const el = canvasRef.current;
       if (!el || !window.Chart) return;
       if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; }
-
       const labels = dailyData.map(d => `${d.day}`);
       const spends = dailyData.map(d => parseFloat(d.spend.toFixed(2)));
       const idealLine = dailyData.map(() => parseFloat((idealDailySpend || 0).toFixed(2)));
-
       const barColors = dailyData.map(d => {
         if (!idealDailySpend) return 'rgba(99,102,241,0.8)';
         const ratio = d.spend / idealDailySpend;
@@ -160,94 +232,73 @@ function DailyChart({ dailyData, idealDailySpend }) {
         if (ratio < 0.9) return 'rgba(251,191,36,0.85)';
         return 'rgba(248,113,113,0.85)';
       });
-
       chartRef.current = new window.Chart(el, {
         type: 'bar',
         data: {
           labels,
           datasets: [
-            {
-              label: 'Daily Spend ($)',
-              data: spends,
-              backgroundColor: barColors,
-              borderRadius: 4,
-              order: 2,
-            },
-            {
-              label: 'Ideal Daily ($)',
-              data: idealLine,
-              type: 'line',
-              borderColor: 'rgba(147,197,253,0.8)',
-              borderWidth: 2,
-              borderDash: [5, 4],
-              pointRadius: 0,
-              fill: false,
-              order: 1,
-            },
+            { label: 'Daily Spend ($)', data: spends, backgroundColor: barColors, borderRadius: 4, order: 2 },
+            { label: 'Ideal Daily ($)', data: idealLine, type: 'line', borderColor: 'rgba(147,197,253,0.8)', borderWidth: 2, borderDash: [5, 4], pointRadius: 0, fill: false, order: 1 },
           ],
         },
         options: {
-          responsive: true,
-          maintainAspectRatio: false,
+          responsive: true, maintainAspectRatio: false,
           interaction: { mode: 'index', intersect: false },
           plugins: {
             legend: { labels: { color: '#94a3b8', font: { size: 11 } } },
-            tooltip: {
-              callbacks: { label: ctx => `${ctx.dataset.label}: $${ctx.parsed.y.toFixed(2)}` },
-            },
+            tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: $${ctx.parsed.y.toFixed(2)}` } },
           },
           scales: {
-            x: {
-              ticks: { color: '#64748b', font: { size: 10 } },
-              grid: { color: 'rgba(51,65,85,0.5)' },
-              title: { display: true, text: 'Day of Month', color: '#64748b', font: { size: 11 } },
-            },
-            y: {
-              ticks: { color: '#64748b', font: { size: 10 }, callback: v => `$${v}` },
-              grid: { color: 'rgba(51,65,85,0.5)' },
-              beginAtZero: true,
-            },
+            x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(51,65,85,0.5)' }, title: { display: true, text: 'Day of Month', color: '#64748b', font: { size: 11 } } },
+            y: { ticks: { color: '#64748b', font: { size: 10 }, callback: v => `$${v}` }, grid: { color: 'rgba(51,65,85,0.5)' }, beginAtZero: true },
           },
         },
       });
     }
-
-    if (window.Chart) {
-      renderChart();
-    } else {
+    if (window.Chart) { renderChart(); }
+    else {
       const script = document.createElement('script');
       script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
       script.onload = renderChart;
       document.head.appendChild(script);
     }
-
-    return () => {
-      if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; }
-    };
+    return () => { if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; } };
   }, [dailyData, idealDailySpend]);
 
-  return (
-    <div style={{ height: 280, position: 'relative' }}>
-      <canvas ref={canvasRef} />
-    </div>
-  );
+  return <div style={{ height: 280, position: 'relative' }}><canvas ref={canvasRef} /></div>;
 }
 
 export default function PacingDashboard() {
   const { data: session, status } = useSession();
 
+  // Accounts
   const [accounts, setAccounts] = useState([]);
   const [selectedAccounts, setSelectedAccounts] = useState([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [clientSearch, setClientSearch] = useState('');
 
+  // Campaign Groups
+  const [campaignGroups, setCampaignGroups] = useState([]);
+  const [selectedGroups, setSelectedGroups] = useState([]);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  const [groupSearch, setGroupSearch] = useState('');
+
+  // Campaigns
+  const [campaigns, setCampaigns] = useState([]);
+  const [selectedCampaigns, setSelectedCampaigns] = useState([]);
+  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
+  const [campaignSearch, setCampaignSearch] = useState('');
+
+  // Month/Year
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
 
+  // Budget
   const [budget, setBudget] = useState({ totalUSD: '', totalZAR: '', note: '' });
   const [showBudgetModal, setShowBudgetModal] = useState(false);
 
+  // Pacing
   const [pacingData, setPacingData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(null);
@@ -257,16 +308,31 @@ export default function PacingDashboard() {
     setBudget(stored);
   }, [selectedMonth, selectedYear]);
 
-  useEffect(() => {
-    if (session) loadAccounts();
-  }, [session]);
+  useEffect(() => { if (session) loadAccounts(); }, [session]);
 
+  // Load campaign groups and campaigns when accounts change
+  useEffect(() => {
+    if (selectedAccounts.length > 0) {
+      loadCampaignGroups();
+      loadCampaigns();
+    } else {
+      setCampaignGroups([]); setSelectedGroups([]);
+      setCampaigns([]); setSelectedCampaigns([]);
+    }
+  }, [selectedAccounts]);
+
+  // Reload campaigns when groups change
+  useEffect(() => {
+    if (selectedAccounts.length > 0) loadCampaigns();
+  }, [selectedGroups]);
+
+  // Auto-refresh pacing data
   useEffect(() => {
     const isCurrentMonth = selectedYear === now.getFullYear() && selectedMonth === (now.getMonth() + 1);
     if (!isCurrentMonth || selectedAccounts.length === 0) return;
     const interval = setInterval(() => loadPacing(), 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [selectedAccounts, selectedMonth, selectedYear]);
+  }, [selectedAccounts, selectedCampaigns, selectedGroups, selectedMonth, selectedYear]);
 
   async function loadAccounts() {
     setLoadingAccounts(true);
@@ -281,6 +347,43 @@ export default function PacingDashboard() {
     setLoadingAccounts(false);
   }
 
+  async function loadCampaignGroups() {
+    setLoadingGroups(true);
+    try {
+      const res = await fetch('/api/campaigngroups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountIds: selectedAccounts }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCampaignGroups(data);
+        setSelectedGroups(data.map(g => g.id));
+      }
+    } catch (err) { console.error(err); }
+    setLoadingGroups(false);
+  }
+
+  async function loadCampaigns() {
+    setLoadingCampaigns(true);
+    try {
+      const res = await fetch('/api/campaigns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountIds: selectedAccounts,
+          campaignGroupIds: selectedGroups.length > 0 ? selectedGroups : null,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCampaigns(data);
+        setSelectedCampaigns(data.map(c => c.id));
+      }
+    } catch (err) { console.error(err); }
+    setLoadingCampaigns(false);
+  }
+
   async function loadPacing() {
     if (selectedAccounts.length === 0) return;
     setLoading(true);
@@ -288,12 +391,15 @@ export default function PacingDashboard() {
       const res = await fetch('/api/pacing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountIds: selectedAccounts, month: selectedMonth, year: selectedYear }),
+        body: JSON.stringify({
+          accountIds: selectedAccounts,
+          campaignGroupIds: selectedGroups.length < campaignGroups.length ? selectedGroups : null,
+          campaignIds: selectedCampaigns.length < campaigns.length ? selectedCampaigns : null,
+          month: selectedMonth,
+          year: selectedYear,
+        }),
       });
-      if (res.ok) {
-        setPacingData(await res.json());
-        setLastRefresh(new Date());
-      }
+      if (res.ok) { setPacingData(await res.json()); setLastRefresh(new Date()); }
     } catch (err) { console.error(err); }
     setLoading(false);
   }
@@ -301,19 +407,28 @@ export default function PacingDashboard() {
   useEffect(() => {
     if (selectedAccounts.length > 0) loadPacing();
     else setPacingData(null);
-  }, [selectedAccounts, selectedMonth, selectedYear]);
+  }, [selectedAccounts, selectedCampaigns, selectedGroups, selectedMonth, selectedYear]);
 
   function handleBudgetSave(newBudget) {
     setBudget(newBudget);
     saveBudget(selectedYear, selectedMonth, newBudget);
   }
 
-  function toggleAccount(id) {
-    setSelectedAccounts(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
+  // Generic toggle helpers
+  function makeToggle(setter) {
+    return (id) => setter(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  }
+  function makeSelectFiltered(setter, allIds) {
+    return (filtered) => setter(prev => [...new Set([...prev, ...filtered.map(i => i.id)])]);
+  }
+  function makeDeselectFiltered(setter) {
+    return (filtered) => {
+      const toRemove = new Set(filtered.map(i => i.id));
+      setter(prev => prev.filter(id => !toRemove.has(id)));
+    };
   }
 
+  // Derived values
   const daysInMonth = pacingData?.summary?.daysInMonth || new Date(selectedYear, selectedMonth, 0).getDate();
   const currentDay = pacingData?.summary?.currentDay || now.getDate();
   const isCurrentMonth = selectedYear === now.getFullYear() && selectedMonth === (now.getMonth() + 1);
@@ -329,53 +444,36 @@ export default function PacingDashboard() {
   const idealSpendToDate = idealDailySpend * currentDay;
   const remainingBudget = budgetUSD > 0 ? Math.max(0, budgetUSD - totalSpend) : 0;
   const remainingDays = Math.max(1, daysInMonth - currentDay + 1);
-
   const avgDailySpend = currentDay > 1 ? totalSpend / (currentDay - 1) : todaySpend;
-  const projectedMonthTotal = isCurrentMonth
-    ? totalSpend + avgDailySpend * remainingDays
-    : totalSpend;
+  const projectedMonthTotal = isCurrentMonth ? totalSpend + avgDailySpend * remainingDays : totalSpend;
 
   const pacingStatus = getPacingStatus(totalSpend, idealSpendToDate);
-
+  const todayDiffFromIdealPct = idealDailySpend > 0 ? ((todaySpend - idealDailySpend) / idealDailySpend * 100) : 0;
   const todayVsIdeal = idealDailySpend > 0 ? Math.abs(todaySpend - idealDailySpend) : 0;
   const yesterdayVsIdeal = idealDailySpend > 0 ? Math.abs(yesterdaySpend - idealDailySpend) : 0;
-  const improvedToday = idealDailySpend > 0
-    ? todayVsIdeal <= yesterdayVsIdeal
-    : todaySpend >= yesterdaySpend;
-
-  const todayDiffFromIdealPct = idealDailySpend > 0 ? ((todaySpend - idealDailySpend) / idealDailySpend * 100) : 0;
+  const improvedToday = idealDailySpend > 0 ? todayVsIdeal <= yesterdayVsIdeal : todaySpend >= yesterdaySpend;
   const budgetUsedPct = budgetUSD > 0 ? Math.min((totalSpend / budgetUSD) * 100, 100) : 0;
   const pacingPct = idealSpendToDate > 0 ? (totalSpend / idealSpendToDate) * 100 : 0;
 
   const monthName = new Date(selectedYear, selectedMonth - 1).toLocaleString('default', { month: 'long' });
-
   const monthOptions = Array.from({ length: 12 }, (_, i) => ({
-    value: i + 1,
-    label: new Date(selectedYear, i).toLocaleString('default', { month: 'long' }),
+    value: i + 1, label: new Date(selectedYear, i).toLocaleString('default', { month: 'long' }),
   }));
 
   const activeAccountCount = selectedAccounts.length;
   const perAccountBudget = budgetUSD > 0 && activeAccountCount > 0 ? budgetUSD / activeAccountCount : 0;
 
-  const filteredAccounts = accounts.filter(a =>
-    !clientSearch ||
-    a.name.toLowerCase().includes(clientSearch.toLowerCase()) ||
-    String(a.id).includes(clientSearch)
-  );
-
-  const clientRows = accounts
-    .filter(a => selectedAccounts.includes(a.id))
-    .map(a => {
-      const totals = pacingData?.accountTotals?.find(t => t.accountId === a.id);
-      return {
-        ...a,
-        totalSpend: totals?.totalSpend || 0,
-        todaySpend: totals?.todaySpend || 0,
-        yesterdaySpend: totals?.yesterdaySpend || 0,
-        pct: perAccountBudget > 0 ? ((totals?.totalSpend || 0) / perAccountBudget) * 100 : 0,
-        improved: (totals?.todaySpend || 0) >= (totals?.yesterdaySpend || 0),
-      };
-    });
+  const clientRows = accounts.filter(a => selectedAccounts.includes(a.id)).map(a => {
+    const totals = pacingData?.accountTotals?.find(t => t.accountId === a.id);
+    return {
+      ...a,
+      totalSpend: totals?.totalSpend || 0,
+      todaySpend: totals?.todaySpend || 0,
+      yesterdaySpend: totals?.yesterdaySpend || 0,
+      pct: perAccountBudget > 0 ? ((totals?.totalSpend || 0) / perAccountBudget) * 100 : 0,
+      improved: (totals?.todaySpend || 0) >= (totals?.yesterdaySpend || 0),
+    };
+  });
 
   const scMap = {
     emerald: { bg: 'bg-emerald-900/40', border: 'border-emerald-500', text: 'text-emerald-400', badge: 'bg-emerald-800 text-emerald-200', bar: 'bg-emerald-500' },
@@ -385,6 +483,11 @@ export default function PacingDashboard() {
   };
   const sc = scMap[pacingStatus.color];
   const StatusIcon = pacingStatus.icon;
+
+  // Active filter summary badge
+  const filterSummary = [];
+  if (selectedGroups.length < campaignGroups.length) filterSummary.push(`${selectedGroups.length}/${campaignGroups.length} groups`);
+  if (selectedCampaigns.length < campaigns.length) filterSummary.push(`${selectedCampaigns.length}/${campaigns.length} campaigns`);
 
   if (status === 'loading') return <LoadingScreen />;
   if (!session) return <SignInScreen />;
@@ -405,6 +508,11 @@ export default function PacingDashboard() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {filterSummary.length > 0 && (
+              <span className="text-xs bg-purple-900 text-purple-300 px-3 py-1 rounded-full font-medium">
+                Filtered: {filterSummary.join(', ')}
+              </span>
+            )}
             {lastRefresh && (
               <span className="text-xs text-slate-500">Updated {lastRefresh.toLocaleTimeString()}</span>
             )}
@@ -424,7 +532,7 @@ export default function PacingDashboard() {
       <div className="max-w-screen-xl mx-auto px-6 py-6 grid grid-cols-12 gap-6">
 
         {/* Sidebar */}
-        <div className="col-span-3 space-y-4">
+        <div className="col-span-3 space-y-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 80px)', position: 'sticky', top: 16 }}>
 
           {/* Month/Year */}
           <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
@@ -436,18 +544,14 @@ export default function PacingDashboard() {
                 <label className="text-xs text-slate-500 block mb-1">Month</label>
                 <select value={selectedMonth} onChange={e => setSelectedMonth(parseInt(e.target.value))}
                   className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500">
-                  {monthOptions.map(m => (
-                    <option key={m.value} value={m.value}>{m.label}</option>
-                  ))}
+                  {monthOptions.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                 </select>
               </div>
               <div>
                 <label className="text-xs text-slate-500 block mb-1">Year</label>
                 <select value={selectedYear} onChange={e => setSelectedYear(parseInt(e.target.value))}
                   className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500">
-                  {[2023, 2024, 2025, 2026].map(y => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
+                  {[2023, 2024, 2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
               </div>
             </div>
@@ -489,13 +593,11 @@ export default function PacingDashboard() {
                     <span className="text-white font-mono">{fmtD(idealDailySpend)}</span>
                   </div>
                   <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Per client</span>
+                    <span className="text-slate-400">Per client ({activeAccountCount})</span>
                     <span className="text-slate-300 font-mono">{fmtD(perAccountBudget)}</span>
                   </div>
                 </div>
-                {budget.note && (
-                  <div className="text-xs text-slate-500 italic pt-1">{budget.note}</div>
-                )}
+                {budget.note && <div className="text-xs text-slate-500 italic pt-1">{budget.note}</div>}
               </div>
             ) : (
               <button onClick={() => setShowBudgetModal(true)}
@@ -505,99 +607,74 @@ export default function PacingDashboard() {
             )}
           </div>
 
-          {/* Clients */}
-          <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-2">
-                <Users className="w-3.5 h-3.5" /> Clients
-              </h3>
-              {loadingAccounts
-                ? <span className="text-xs text-slate-400 flex items-center gap-1"><RefreshCw className="w-3 h-3 animate-spin" /> Loading...</span>
-                : <span className="text-xs text-blue-400 font-bold">{selectedAccounts.length}/{accounts.length}</span>
-              }
-            </div>
-
-            {/* Search box */}
-            <div className="relative mb-2">
-              <svg className="absolute left-2.5 top-2 w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input
-                type="text"
-                placeholder="Search by name or ID..."
-                value={clientSearch}
-                onChange={e => setClientSearch(e.target.value)}
-                className="w-full pl-8 pr-8 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-              />
-              {clientSearch && (
-                <button onClick={() => setClientSearch('')}
-                  className="absolute right-2 top-1.5 text-slate-400 hover:text-white">
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* Select/Deselect buttons */}
-            <div className="flex gap-2 mb-2">
-              <button onClick={() => setSelectedAccounts(prev => {
-                const toAdd = filteredAccounts.map(a => a.id);
-                return [...new Set([...prev, ...toAdd])];
-              })}
-                className="flex-1 px-2 py-1 bg-blue-700 text-white rounded text-xs font-medium hover:bg-blue-600">
-                {clientSearch ? `Select (${filteredAccounts.length})` : 'All'}
-              </button>
-              <button onClick={() => {
-                if (clientSearch) {
-                  const toRemove = new Set(filteredAccounts.map(a => a.id));
-                  setSelectedAccounts(prev => prev.filter(id => !toRemove.has(id)));
-                } else {
-                  setSelectedAccounts([]);
-                }
-              }}
-                className="flex-1 px-2 py-1 bg-slate-600 text-slate-300 rounded text-xs font-medium hover:bg-slate-500">
-                {clientSearch ? `Deselect (${filteredAccounts.filter(a => selectedAccounts.includes(a.id)).length})` : 'None'}
-              </button>
-            </div>
-
-            {/* Results count when searching */}
-            {clientSearch && (
-              <div className="text-xs text-slate-500 mb-2 px-1">
-                Showing {filteredAccounts.length} of {accounts.length} clients
-              </div>
-            )}
-
-            <div className="space-y-1.5 max-h-72 overflow-y-auto pr-0.5">
-              {filteredAccounts.map(account => {
-                const selected = selectedAccounts.includes(account.id);
-                const totals = pacingData?.accountTotals?.find(t => t.accountId === account.id);
-                return (
-                  <label key={account.id}
-                    className={`flex items-start gap-2.5 p-2.5 rounded-lg cursor-pointer border transition-colors ${
-                      selected
-                        ? 'bg-blue-900/40 border-blue-600 text-white'
-                        : 'border-slate-600 text-slate-400 hover:bg-slate-700'
-                    }`}>
-                    <input type="checkbox" checked={selected} onChange={() => toggleAccount(account.id)}
-                      className="w-3.5 h-3.5 accent-blue-500 mt-0.5 flex-shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-semibold text-white truncate">{account.name}</div>
-                      <div className="text-xs text-slate-500 font-mono">ID: {account.id}</div>
-                      {totals && (
-                        <div className="text-xs text-emerald-400 font-mono mt-0.5">
-                          {fmtD(totals.totalSpend)} spent
-                        </div>
-                      )}
-                    </div>
-                  </label>
-                );
-              })}
-              {filteredAccounts.length === 0 && !loadingAccounts && (
-                <p className="text-xs text-slate-500 text-center py-4">
-                  {clientSearch ? `No clients match "${clientSearch}"` : 'No accounts found'}
-                </p>
-              )}
-            </div>
+          {/* Step indicator */}
+          <div className="flex items-center gap-2 px-1">
+            <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">1</span>
+            <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Clients</span>
           </div>
+
+          {/* Clients */}
+          <FilterSection
+            title="Clients"
+            icon={Users}
+            items={accounts}
+            selectedIds={selectedAccounts}
+            onToggle={makeToggle(setSelectedAccounts)}
+            loading={loadingAccounts}
+            searchValue={clientSearch}
+            onSearchChange={setClientSearch}
+            onSelectFiltered={makeSelectFiltered(setSelectedAccounts)}
+            onDeselectFiltered={makeDeselectFiltered(setSelectedAccounts)}
+            totalCount={accounts.length}
+            accentColor="blue"
+            emptyMessage="No accounts found"
+          />
+
+          {selectedAccounts.length > 0 && (
+            <>
+              {/* Campaign Groups */}
+              <div className="flex items-center gap-2 px-1 pt-1">
+                <span className="w-5 h-5 rounded-full bg-purple-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">2</span>
+                <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Campaign Groups</span>
+              </div>
+              <FilterSection
+                title="Campaign Groups"
+                icon={Target}
+                items={campaignGroups}
+                selectedIds={selectedGroups}
+                onToggle={makeToggle(setSelectedGroups)}
+                loading={loadingGroups}
+                searchValue={groupSearch}
+                onSearchChange={setGroupSearch}
+                onSelectFiltered={makeSelectFiltered(setSelectedGroups)}
+                onDeselectFiltered={makeDeselectFiltered(setSelectedGroups)}
+                totalCount={campaignGroups.length}
+                accentColor="purple"
+                emptyMessage="No campaign groups found"
+              />
+
+              {/* Campaigns */}
+              <div className="flex items-center gap-2 px-1 pt-1">
+                <span className="w-5 h-5 rounded-full bg-emerald-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">3</span>
+                <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Campaigns</span>
+              </div>
+              <FilterSection
+                title="Campaigns"
+                icon={Target}
+                items={campaigns}
+                selectedIds={selectedCampaigns}
+                onToggle={makeToggle(setSelectedCampaigns)}
+                loading={loadingCampaigns}
+                searchValue={campaignSearch}
+                onSearchChange={setCampaignSearch}
+                onSelectFiltered={makeSelectFiltered(setSelectedCampaigns)}
+                onDeselectFiltered={makeDeselectFiltered(setSelectedCampaigns)}
+                totalCount={campaigns.length}
+                accentColor="emerald"
+                emptyMessage="No campaigns found"
+              />
+            </>
+          )}
         </div>
 
         {/* Main Content */}
@@ -620,7 +697,6 @@ export default function PacingDashboard() {
                     <Edit3 className="w-3 h-3" /> {budgetUSD > 0 ? 'Edit budget' : 'Set budget'}
                   </button>
                 </div>
-
                 <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
                   <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Spent to Date</div>
                   <div className="text-2xl font-bold text-white mb-1">{fmtD(totalSpend)}</div>
@@ -628,17 +704,13 @@ export default function PacingDashboard() {
                     {budgetUSD > 0 ? `${fmt(budgetUsedPct, 1)}% of budget` : `Day ${currentDay} of ${daysInMonth}`}
                   </div>
                 </div>
-
                 <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
                   <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Remaining</div>
                   <div className={`text-2xl font-bold mb-1 ${budgetUSD > 0 && totalSpend > budgetUSD ? 'text-red-400' : 'text-white'}`}>
                     {budgetUSD > 0 ? fmtD(remainingBudget) : '-'}
                   </div>
-                  <div className="text-xs text-slate-400">
-                    {budgetUSD > 0 ? `${remainingDays} days left` : 'Set a budget'}
-                  </div>
+                  <div className="text-xs text-slate-400">{budgetUSD > 0 ? `${remainingDays} days left` : 'Set a budget'}</div>
                 </div>
-
                 <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
                   <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">
                     {isCurrentMonth ? 'Projected Total' : 'Final Spend'}
@@ -649,35 +721,26 @@ export default function PacingDashboard() {
                   }`}>
                     {fmtD(isCurrentMonth ? projectedMonthTotal : totalSpend)}
                   </div>
-                  <div className="text-xs text-slate-400">
-                    {isCurrentMonth ? 'End of month estimate' : 'Final spend'}
-                  </div>
+                  <div className="text-xs text-slate-400">{isCurrentMonth ? 'End of month estimate' : 'Final spend'}</div>
                 </div>
               </div>
 
               {/* Pacing Status + Today vs Yesterday */}
               <div className="grid grid-cols-2 gap-4">
-
-                {/* Pacing Status */}
                 <div className={`rounded-xl p-6 border-2 ${sc.bg} ${sc.border}`}>
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-bold text-white uppercase tracking-wide">Overall Pacing</h3>
-                    <span className={`text-xs font-bold px-3 py-1 rounded-full ${sc.badge}`}>
-                      {monthName} {selectedYear}
-                    </span>
+                    <span className={`text-xs font-bold px-3 py-1 rounded-full ${sc.badge}`}>{monthName} {selectedYear}</span>
                   </div>
                   <div className="flex items-center gap-4 mb-5">
                     <StatusIcon className={`w-12 h-12 ${sc.text} flex-shrink-0`} />
                     <div>
                       <div className={`text-3xl font-bold ${sc.text}`}>{pacingStatus.label}</div>
                       <div className="text-sm text-slate-400 mt-0.5">
-                        {idealSpendToDate > 0
-                          ? `${fmt(pacingPct, 1)}% of ideal pacing`
-                          : 'Set a budget to track pacing'}
+                        {idealSpendToDate > 0 ? `${fmt(pacingPct, 1)}% of ideal pacing` : 'Set a budget to track pacing'}
                       </div>
                     </div>
                   </div>
-
                   {budgetUSD > 0 && (
                     <div className="space-y-3">
                       <div>
@@ -690,8 +753,7 @@ export default function PacingDashboard() {
                           <span className="text-slate-300 font-mono">{fmtD(idealSpendToDate)}</span>
                         </div>
                         <div className="h-3 bg-slate-700 rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full transition-all ${sc.bar}`}
-                            style={{ width: `${Math.min(budgetUsedPct, 100)}%` }} />
+                          <div className={`h-full rounded-full transition-all ${sc.bar}`} style={{ width: `${Math.min(budgetUsedPct, 100)}%` }} />
                         </div>
                         <div className="flex justify-between text-xs mt-1">
                           <span className="text-slate-500">{fmtD(0)}</span>
@@ -705,18 +767,15 @@ export default function PacingDashboard() {
                           <span className="text-slate-300">Day {currentDay} / {daysInMonth}</span>
                         </div>
                         <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-                          <div className="h-full bg-slate-500 rounded-full"
-                            style={{ width: `${(currentDay / daysInMonth) * 100}%` }} />
+                          <div className="h-full bg-slate-500 rounded-full" style={{ width: `${(currentDay / daysInMonth) * 100}%` }} />
                         </div>
                       </div>
                     </div>
                   )}
                 </div>
 
-                {/* Today vs Yesterday */}
                 <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
                   <h3 className="text-sm font-bold text-white uppercase tracking-wide mb-4">Today vs Yesterday</h3>
-
                   <div className={`flex items-center gap-3 mb-5 p-4 rounded-xl border ${
                     improvedToday ? 'bg-emerald-900/30 border-emerald-600' : 'bg-red-900/20 border-red-700'
                   }`}>
@@ -735,7 +794,6 @@ export default function PacingDashboard() {
                       </div>
                     </div>
                   </div>
-
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-slate-700/60 rounded-lg p-4">
                       <div className="text-xs text-slate-400 mb-1 font-medium">Today</div>
@@ -745,12 +803,8 @@ export default function PacingDashboard() {
                           Math.abs(todayDiffFromIdealPct) <= 10 ? 'text-emerald-400' :
                           todaySpend < idealDailySpend ? 'text-yellow-400' : 'text-red-400'
                         }`}>
-                          {Math.abs(todayDiffFromIdealPct) <= 10
-                            ? <CheckCircle className="w-3 h-3" />
-                            : todaySpend < idealDailySpend
-                            ? <ChevronDown className="w-3 h-3" />
-                            : <ChevronUp className="w-3 h-3" />
-                          }
+                          {Math.abs(todayDiffFromIdealPct) <= 10 ? <CheckCircle className="w-3 h-3" /> :
+                            todaySpend < idealDailySpend ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
                           Ideal: {fmtD(idealDailySpend)}
                         </div>
                       )}
@@ -759,25 +813,19 @@ export default function PacingDashboard() {
                       <div className="text-xs text-slate-400 mb-1 font-medium">Yesterday</div>
                       <div className="text-2xl font-bold text-white">{fmtD(yesterdaySpend)}</div>
                       {yesterdaySpend > 0 && (
-                        <div className={`text-xs mt-1 font-medium flex items-center gap-1 ${
-                          todaySpend >= yesterdaySpend ? 'text-emerald-400' : 'text-red-400'
-                        }`}>
+                        <div className={`text-xs mt-1 font-medium flex items-center gap-1 ${todaySpend >= yesterdaySpend ? 'text-emerald-400' : 'text-red-400'}`}>
                           {todaySpend >= yesterdaySpend
                             ? <><ChevronUp className="w-3 h-3" /> +{fmtD(todaySpend - yesterdaySpend)} today</>
-                            : <><ChevronDown className="w-3 h-3" /> -{fmtD(yesterdaySpend - todaySpend)} today</>
-                          }
+                            : <><ChevronDown className="w-3 h-3" /> -{fmtD(yesterdaySpend - todaySpend)} today</>}
                         </div>
                       )}
                     </div>
                   </div>
-
                   {budgetUSD > 0 && isCurrentMonth && (
                     <div className="mt-4 pt-4 border-t border-slate-700 space-y-1">
                       <div className="flex justify-between text-xs">
                         <span className="text-slate-400">Needed per day to hit budget</span>
-                        <span className="text-white font-bold font-mono">
-                          {fmtD(remainingDays > 0 ? remainingBudget / remainingDays : 0)}
-                        </span>
+                        <span className="text-white font-bold font-mono">{fmtD(remainingDays > 0 ? remainingBudget / remainingDays : 0)}</span>
                       </div>
                       <div className="flex justify-between text-xs">
                         <span className="text-slate-400">Original daily target</span>
@@ -795,18 +843,10 @@ export default function PacingDashboard() {
                     Daily Spend — {monthName} {selectedYear}
                   </h3>
                   <div className="flex items-center gap-4 text-xs text-slate-400">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-3 h-3 rounded bg-emerald-500"></div>On Track
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-3 h-3 rounded bg-yellow-500"></div>Under
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-3 h-3 rounded bg-red-400"></div>Over
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-6 border-t-2 border-dashed border-blue-300"></div>Ideal
-                    </div>
+                    <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-emerald-500"></div>On Track</div>
+                    <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-yellow-500"></div>Under</div>
+                    <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-red-400"></div>Over</div>
+                    <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-blue-300"></div>Ideal</div>
                   </div>
                 </div>
                 {loading ? (
@@ -814,10 +854,7 @@ export default function PacingDashboard() {
                     <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
                   </div>
                 ) : pacingData?.dailyData?.length > 0 ? (
-                  <DailyChart
-                    dailyData={pacingData.dailyData}
-                    idealDailySpend={idealDailySpend}
-                  />
+                  <DailyChart dailyData={pacingData.dailyData} idealDailySpend={idealDailySpend} />
                 ) : (
                   <div className="flex items-center justify-center h-64 text-slate-500 text-sm">
                     No spend data for this period
@@ -829,9 +866,7 @@ export default function PacingDashboard() {
               <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
                 <h3 className="text-sm font-bold text-white uppercase tracking-wide mb-4 flex items-center gap-2">
                   <Users className="w-4 h-4" /> Client Breakdown
-                  <span className="text-slate-500 text-xs font-normal normal-case">
-                    {activeAccountCount} clients selected
-                  </span>
+                  <span className="text-slate-500 text-xs font-normal normal-case">{activeAccountCount} clients selected</span>
                 </h3>
                 {clientRows.length === 0 ? (
                   <p className="text-slate-500 text-sm text-center py-6">No client data available</p>
@@ -841,9 +876,7 @@ export default function PacingDashboard() {
                       <thead>
                         <tr className="border-b border-slate-700">
                           {['Client', 'Today', 'Yesterday', 'Month Total', '% of Budget', 'Trend', 'Pacing Bar'].map(h => (
-                            <th key={h} className={`pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide ${h === 'Client' || h === 'Pacing Bar' ? 'text-left' : 'text-right'} ${h === 'Trend' ? 'text-center' : ''}`}>
-                              {h}
-                            </th>
+                            <th key={h} className={`pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide ${h === 'Client' || h === 'Pacing Bar' ? 'text-left' : h === 'Trend' ? 'text-center' : 'text-right'}`}>{h}</th>
                           ))}
                         </tr>
                       </thead>
@@ -859,36 +892,21 @@ export default function PacingDashboard() {
                             <td className="py-3 text-right font-bold text-white text-xs">{fmtD(client.totalSpend)}</td>
                             <td className="py-3 text-right text-xs">
                               {budgetUSD > 0
-                                ? <span className={`font-bold ${client.pct > 100 ? 'text-red-400' : client.pct > 75 ? 'text-yellow-400' : 'text-emerald-400'}`}>
-                                    {fmt(client.pct, 1)}%
-                                  </span>
-                                : <span className="text-slate-500">-</span>
-                              }
+                                ? <span className={`font-bold ${client.pct > 100 ? 'text-red-400' : client.pct > 75 ? 'text-yellow-400' : 'text-emerald-400'}`}>{fmt(client.pct, 1)}%</span>
+                                : <span className="text-slate-500">-</span>}
                             </td>
                             <td className="py-3 text-center">
                               {client.improved
-                                ? <div className="flex items-center justify-center gap-1 text-emerald-400 text-xs font-medium">
-                                    <TrendingUp className="w-3.5 h-3.5" /> Up
-                                  </div>
-                                : <div className="flex items-center justify-center gap-1 text-red-400 text-xs font-medium">
-                                    <TrendingDown className="w-3.5 h-3.5" /> Down
-                                  </div>
-                              }
+                                ? <div className="flex items-center justify-center gap-1 text-emerald-400 text-xs font-medium"><TrendingUp className="w-3.5 h-3.5" /> Up</div>
+                                : <div className="flex items-center justify-center gap-1 text-red-400 text-xs font-medium"><TrendingDown className="w-3.5 h-3.5" /> Down</div>}
                             </td>
                             <td className="py-3 w-32">
                               {budgetUSD > 0 ? (
                                 <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
-                                  <div
-                                    className={`h-full rounded-full ${
-                                      client.pct > 100 ? 'bg-red-500' :
-                                      client.pct > 75 ? 'bg-yellow-500' : 'bg-emerald-500'
-                                    }`}
-                                    style={{ width: `${Math.min(client.pct, 100)}%` }}
-                                  />
+                                  <div className={`h-full rounded-full ${client.pct > 100 ? 'bg-red-500' : client.pct > 75 ? 'bg-yellow-500' : 'bg-emerald-500'}`}
+                                    style={{ width: `${Math.min(client.pct, 100)}%` }} />
                                 </div>
-                              ) : (
-                                <span className="text-xs text-slate-600">No budget set</span>
-                              )}
+                              ) : <span className="text-xs text-slate-600">No budget set</span>}
                             </td>
                           </tr>
                         ))}
@@ -897,22 +915,13 @@ export default function PacingDashboard() {
                         <tfoot>
                           <tr className="bg-slate-700/40">
                             <td className="py-3 font-bold text-white text-xs uppercase">Total</td>
-                            <td className="py-3 text-right font-bold text-white font-mono text-xs">
-                              {fmtD(clientRows.reduce((s, r) => s + r.todaySpend, 0))}
-                            </td>
-                            <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">
-                              {fmtD(clientRows.reduce((s, r) => s + r.yesterdaySpend, 0))}
-                            </td>
-                            <td className="py-3 text-right font-bold text-white font-mono text-xs">
-                              {fmtD(totalSpend)}
-                            </td>
+                            <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtD(clientRows.reduce((s, r) => s + r.todaySpend, 0))}</td>
+                            <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{fmtD(clientRows.reduce((s, r) => s + r.yesterdaySpend, 0))}</td>
+                            <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtD(totalSpend)}</td>
                             <td className="py-3 text-right font-bold text-xs">
                               {budgetUSD > 0
-                                ? <span className={`${budgetUsedPct > 100 ? 'text-red-400' : budgetUsedPct > 75 ? 'text-yellow-400' : 'text-emerald-400'}`}>
-                                    {fmt(budgetUsedPct, 1)}%
-                                  </span>
-                                : <span className="text-slate-500">-</span>
-                              }
+                                ? <span className={`${budgetUsedPct > 100 ? 'text-red-400' : budgetUsedPct > 75 ? 'text-yellow-400' : 'text-emerald-400'}`}>{fmt(budgetUsedPct, 1)}%</span>
+                                : <span className="text-slate-500">-</span>}
                             </td>
                             <td colSpan={2}></td>
                           </tr>
@@ -927,14 +936,8 @@ export default function PacingDashboard() {
         </div>
       </div>
 
-      <BudgetModal
-        show={showBudgetModal}
-        onClose={() => setShowBudgetModal(false)}
-        budget={budget}
-        onSave={handleBudgetSave}
-        month={selectedMonth}
-        year={selectedYear}
-      />
+      <BudgetModal show={showBudgetModal} onClose={() => setShowBudgetModal(false)}
+        budget={budget} onSave={handleBudgetSave} month={selectedMonth} year={selectedYear} />
     </div>
   );
 }

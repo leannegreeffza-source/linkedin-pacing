@@ -10,7 +10,7 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    const { accountIds, month, year } = await request.json();
+    const { accountIds, campaignGroupIds, campaignIds, month, year } = await request.json();
     if (!accountIds || accountIds.length === 0) {
       return NextResponse.json({ error: 'No accounts provided' }, { status: 400 });
     }
@@ -25,6 +25,10 @@ export async function POST(request) {
     const accountResults = await Promise.all(
       accountIds.map(async (accountId) => {
         try {
+          // Build params - pivot by campaign or account depending on filters
+          const hasCampaignFilter = campaignIds && campaignIds.length > 0;
+          const hasGroupFilter = campaignGroupIds && campaignGroupIds.length > 0;
+
           const params = new URLSearchParams({
             q: 'analytics',
             pivot: 'ACCOUNT',
@@ -38,6 +42,20 @@ export async function POST(request) {
             'accounts[0]': `urn:li:sponsoredAccount:${accountId}`,
             fields: 'dateRange,costInLocalCurrency,impressions,clicks,totalEngagements,oneClickLeads',
           });
+
+          // Add campaign filters
+          if (hasCampaignFilter) {
+            campaignIds.forEach((cId, idx) => {
+              params.append(`campaigns[${idx}]`, `urn:li:sponsoredCampaign:${cId}`);
+            });
+          }
+
+          // Add campaign group filters
+          if (hasGroupFilter && !hasCampaignFilter) {
+            campaignGroupIds.forEach((gId, idx) => {
+              params.append(`campaignGroups[${idx}]`, `urn:li:sponsoredCampaignGroup:${gId}`);
+            });
+          }
 
           const res = await fetch(
             `https://api.linkedin.com/v2/adAnalyticsV2?${params.toString()}`,
@@ -82,14 +100,8 @@ export async function POST(request) {
       for (const day of result.dailyData) {
         if (!dateMap[day.date]) {
           dateMap[day.date] = {
-            date: day.date,
-            day: day.day,
-            month: day.month,
-            year: day.year,
-            spend: 0,
-            impressions: 0,
-            clicks: 0,
-            leads: 0,
+            date: day.date, day: day.day, month: day.month, year: day.year,
+            spend: 0, impressions: 0, clicks: 0, leads: 0,
           };
         }
         dateMap[day.date].spend += day.spend;
@@ -107,12 +119,8 @@ export async function POST(request) {
       return {
         accountId: r.accountId,
         totalSpend: r.dailyData.reduce((s, d) => s + d.spend, 0),
-        todaySpend: r.dailyData.find(d =>
-          d.day === now.getDate() && d.month === (now.getMonth() + 1)
-        )?.spend || 0,
-        yesterdaySpend: r.dailyData.find(d =>
-          d.day === yesterday.getDate() && d.month === (yesterday.getMonth() + 1)
-        )?.spend || 0,
+        todaySpend: r.dailyData.find(d => d.day === now.getDate() && d.month === (now.getMonth() + 1))?.spend || 0,
+        yesterdaySpend: r.dailyData.find(d => d.day === yesterday.getDate() && d.month === (yesterday.getMonth() + 1))?.spend || 0,
         error: r.error || false,
       };
     });
@@ -130,14 +138,9 @@ export async function POST(request) {
       dailyData: mergedDailyData,
       accountTotals,
       summary: {
-        totalSpend,
-        todaySpend,
-        yesterdaySpend,
-        currentDay: now.getDate(),
-        daysInMonth,
-        targetMonth,
-        targetYear,
-        lastDay,
+        totalSpend, todaySpend, yesterdaySpend,
+        currentDay: now.getDate(), daysInMonth,
+        targetMonth, targetYear, lastDay,
       },
     });
   } catch (error) {
