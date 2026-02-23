@@ -239,6 +239,7 @@ export default function PacingDashboard() {
   const [accounts, setAccounts] = useState([]);
   const [selectedAccounts, setSelectedAccounts] = useState([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [clientSearch, setClientSearch] = useState('');
 
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
@@ -355,6 +356,12 @@ export default function PacingDashboard() {
 
   const activeAccountCount = selectedAccounts.length;
   const perAccountBudget = budgetUSD > 0 && activeAccountCount > 0 ? budgetUSD / activeAccountCount : 0;
+
+  const filteredAccounts = accounts.filter(a =>
+    !clientSearch ||
+    a.name.toLowerCase().includes(clientSearch.toLowerCase()) ||
+    String(a.id).includes(clientSearch)
+  );
 
   const clientRows = accounts
     .filter(a => selectedAccounts.includes(a.id))
@@ -503,22 +510,64 @@ export default function PacingDashboard() {
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-2">
                 <Users className="w-3.5 h-3.5" /> Clients
-                <span className="text-blue-400">({selectedAccounts.length}/{accounts.length})</span>
               </h3>
-              {loadingAccounts && <RefreshCw className="w-3 h-3 text-slate-400 animate-spin" />}
+              {loadingAccounts
+                ? <span className="text-xs text-slate-400 flex items-center gap-1"><RefreshCw className="w-3 h-3 animate-spin" /> Loading...</span>
+                : <span className="text-xs text-blue-400 font-bold">{selectedAccounts.length}/{accounts.length}</span>
+              }
             </div>
-            <div className="flex gap-2 mb-3">
-              <button onClick={() => setSelectedAccounts(accounts.map(a => a.id))}
+
+            {/* Search box */}
+            <div className="relative mb-2">
+              <svg className="absolute left-2.5 top-2 w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Search by name or ID..."
+                value={clientSearch}
+                onChange={e => setClientSearch(e.target.value)}
+                className="w-full pl-8 pr-8 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+              />
+              {clientSearch && (
+                <button onClick={() => setClientSearch('')}
+                  className="absolute right-2 top-1.5 text-slate-400 hover:text-white">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Select/Deselect buttons */}
+            <div className="flex gap-2 mb-2">
+              <button onClick={() => setSelectedAccounts(prev => {
+                const toAdd = filteredAccounts.map(a => a.id);
+                return [...new Set([...prev, ...toAdd])];
+              })}
                 className="flex-1 px-2 py-1 bg-blue-700 text-white rounded text-xs font-medium hover:bg-blue-600">
-                All
+                {clientSearch ? `Select (${filteredAccounts.length})` : 'All'}
               </button>
-              <button onClick={() => setSelectedAccounts([])}
+              <button onClick={() => {
+                if (clientSearch) {
+                  const toRemove = new Set(filteredAccounts.map(a => a.id));
+                  setSelectedAccounts(prev => prev.filter(id => !toRemove.has(id)));
+                } else {
+                  setSelectedAccounts([]);
+                }
+              }}
                 className="flex-1 px-2 py-1 bg-slate-600 text-slate-300 rounded text-xs font-medium hover:bg-slate-500">
-                None
+                {clientSearch ? `Deselect (${filteredAccounts.filter(a => selectedAccounts.includes(a.id)).length})` : 'None'}
               </button>
             </div>
-            <div className="space-y-1.5 max-h-72 overflow-y-auto">
-              {accounts.map(account => {
+
+            {/* Results count when searching */}
+            {clientSearch && (
+              <div className="text-xs text-slate-500 mb-2 px-1">
+                Showing {filteredAccounts.length} of {accounts.length} clients
+              </div>
+            )}
+
+            <div className="space-y-1.5 max-h-72 overflow-y-auto pr-0.5">
+              {filteredAccounts.map(account => {
                 const selected = selectedAccounts.includes(account.id);
                 const totals = pacingData?.accountTotals?.find(t => t.accountId === account.id);
                 return (
@@ -542,8 +591,10 @@ export default function PacingDashboard() {
                   </label>
                 );
               })}
-              {accounts.length === 0 && !loadingAccounts && (
-                <p className="text-xs text-slate-500 text-center py-4">No accounts found</p>
+              {filteredAccounts.length === 0 && !loadingAccounts && (
+                <p className="text-xs text-slate-500 text-center py-4">
+                  {clientSearch ? `No clients match "${clientSearch}"` : 'No accounts found'}
+                </p>
               )}
             </div>
           </div>
