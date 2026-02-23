@@ -22,7 +22,6 @@ export async function POST(request) {
     const isCurrentMonth = targetYear === now.getFullYear() && targetMonth === (now.getMonth() + 1);
     const lastDay = isCurrentMonth ? now.getDate() : daysInMonth;
 
-    // Fetch daily analytics per account
     const accountResults = await Promise.all(
       accountIds.map(async (accountId) => {
         try {
@@ -78,12 +77,20 @@ export async function POST(request) {
       })
     );
 
-    // Merge daily data across all accounts by date
     const dateMap = {};
     for (const result of accountResults) {
       for (const day of result.dailyData) {
         if (!dateMap[day.date]) {
-          dateMap[day.date] = { date: day.date, day: day.day, month: day.month, year: day.year, spend: 0, impressions: 0, clicks: 0, leads: 0 };
+          dateMap[day.date] = {
+            date: day.date,
+            day: day.day,
+            month: day.month,
+            year: day.year,
+            spend: 0,
+            impressions: 0,
+            clicks: 0,
+            leads: 0,
+          };
         }
         dateMap[day.date].spend += day.spend;
         dateMap[day.date].impressions += day.impressions;
@@ -94,28 +101,30 @@ export async function POST(request) {
 
     const mergedDailyData = Object.values(dateMap).sort((a, b) => a.date.localeCompare(b.date));
 
-    // Per-account totals
-    const accountTotals = accountResults.map(r => ({
-      accountId: r.accountId,
-      totalSpend: r.dailyData.reduce((s, d) => s + d.spend, 0),
-      todaySpend: r.dailyData.find(d => d.day === now.getDate() && d.month === now.getMonth() + 1)?.spend || 0,
-      yesterdaySpend: r.dailyData.find(d => {
-        const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
-        return d.day === yesterday.getDate() && d.month === yesterday.getMonth() + 1;
-      })?.spend || 0,
-      error: r.error,
-    }));
+    const accountTotals = accountResults.map(r => {
+      const yesterday = new Date(now);
+      yesterday.setDate(yesterday.getDate() - 1);
+      return {
+        accountId: r.accountId,
+        totalSpend: r.dailyData.reduce((s, d) => s + d.spend, 0),
+        todaySpend: r.dailyData.find(d =>
+          d.day === now.getDate() && d.month === (now.getMonth() + 1)
+        )?.spend || 0,
+        yesterdaySpend: r.dailyData.find(d =>
+          d.day === yesterday.getDate() && d.month === (yesterday.getMonth() + 1)
+        )?.spend || 0,
+        error: r.error || false,
+      };
+    });
 
     const todayStr = now.toISOString().split('T')[0];
-    const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = yesterday.toISOString().split('T')[0];
 
-    const todayData = dateMap[todayStr];
-    const yesterdayData = dateMap[yesterdayStr];
-
     const totalSpend = mergedDailyData.reduce((s, d) => s + d.spend, 0);
-    const todaySpend = todayData?.spend || 0;
-    const yesterdaySpend = yesterdayData?.spend || 0;
+    const todaySpend = dateMap[todayStr]?.spend || 0;
+    const yesterdaySpend = dateMap[yesterdayStr]?.spend || 0;
 
     return NextResponse.json({
       dailyData: mergedDailyData,

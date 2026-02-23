@@ -5,37 +5,39 @@ import { useSession, signIn, signOut } from 'next-auth/react';
 import {
   TrendingUp, TrendingDown, DollarSign, RefreshCw,
   CheckCircle, AlertCircle, XCircle, Edit3, Save, X,
-  ChevronUp, ChevronDown, Minus, Users, Calendar, Target
+  ChevronUp, ChevronDown, Users, Calendar, Target, Minus
 } from 'lucide-react';
-
-// ─── Utility ─────────────────────────────────────────────────────────────────
 
 function fmt(n, decimals = 2) {
   if (n == null || isNaN(n)) return '0.00';
-  return Number(n).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  return Number(n).toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
 }
-
-function fmtR(n) { return `R${fmt(n)}`; }
 function fmtD(n) { return `$${fmt(n)}`; }
+function fmtR(n) { return `R${fmt(n)}`; }
 
 function getBudgetKey(year, month) {
   return `pacing_budget_${year}_${month}`;
 }
-
 function loadBudget(year, month) {
   try {
     const raw = localStorage.getItem(getBudgetKey(year, month));
     return raw ? JSON.parse(raw) : { totalUSD: '', totalZAR: '', note: '' };
   } catch { return { totalUSD: '', totalZAR: '', note: '' }; }
 }
-
 function saveBudget(year, month, data) {
-  try {
-    localStorage.setItem(getBudgetKey(year, month), JSON.stringify(data));
-  } catch {}
+  try { localStorage.setItem(getBudgetKey(year, month), JSON.stringify(data)); } catch {}
 }
 
-// ─── Sign In ──────────────────────────────────────────────────────────────────
+function getPacingStatus(actual, ideal) {
+  if (!ideal || ideal === 0) return { label: 'No Budget Set', color: 'slate', icon: Minus };
+  const ratio = actual / ideal;
+  if (ratio >= 0.9 && ratio <= 1.1) return { label: 'On Track', color: 'emerald', icon: CheckCircle };
+  if (ratio < 0.9) return { label: 'Under Pacing', color: 'yellow', icon: AlertCircle };
+  return { label: 'Over Pacing', color: 'red', icon: XCircle };
+}
 
 function SignInScreen() {
   return (
@@ -66,20 +68,11 @@ function LoadingScreen() {
   );
 }
 
-// ─── Budget Editor Modal ──────────────────────────────────────────────────────
-
 function BudgetModal({ show, onClose, budget, onSave, month, year }) {
   const [form, setForm] = useState(budget);
   useEffect(() => setForm(budget), [budget]);
-
   if (!show) return null;
-
   const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
-
-  function handleSave() {
-    onSave(form);
-    onClose();
-  }
 
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
@@ -100,14 +93,10 @@ function BudgetModal({ show, onClose, budget, onSave, month, year }) {
             </label>
             <div className="relative">
               <span className="absolute left-3 top-2.5 text-slate-400 font-bold">$</span>
-              <input
-                type="number"
-                step="0.01"
-                placeholder="e.g. 10000"
+              <input type="number" step="0.01" placeholder="e.g. 10000"
                 value={form.totalUSD}
                 onChange={e => setForm(f => ({ ...f, totalUSD: e.target.value }))}
-                className="w-full pl-7 pr-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-lg font-bold focus:outline-none focus:border-blue-500"
-              />
+                className="w-full pl-7 pr-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-lg font-bold focus:outline-none focus:border-blue-500" />
             </div>
           </div>
           <div>
@@ -116,27 +105,21 @@ function BudgetModal({ show, onClose, budget, onSave, month, year }) {
             </label>
             <div className="relative">
               <span className="absolute left-3 top-2.5 text-slate-400 font-bold">R</span>
-              <input
-                type="number"
-                step="0.01"
-                placeholder="e.g. 185000"
+              <input type="number" step="0.01" placeholder="e.g. 185000"
                 value={form.totalZAR}
                 onChange={e => setForm(f => ({ ...f, totalZAR: e.target.value }))}
-                className="w-full pl-7 pr-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-lg font-bold focus:outline-none focus:border-blue-500"
-              />
+                className="w-full pl-7 pr-4 py-2.5 bg-slate-700 border border-slate-600 rounded-lg text-white text-lg font-bold focus:outline-none focus:border-blue-500" />
             </div>
           </div>
           <div>
             <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-2">
               Budget Notes
             </label>
-            <textarea
-              placeholder="e.g. Q1 LinkedIn budget approved by management"
+            <textarea placeholder="e.g. Q1 LinkedIn budget"
               value={form.note}
               onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
               rows={2}
-              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 resize-none"
-            />
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500 resize-none" />
           </div>
         </div>
         <div className="flex gap-3 p-6 pt-0">
@@ -144,7 +127,7 @@ function BudgetModal({ show, onClose, budget, onSave, month, year }) {
             className="flex-1 px-4 py-2.5 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 font-medium text-sm">
             Cancel
           </button>
-          <button onClick={handleSave}
+          <button onClick={() => { onSave(form); onClose(); }}
             className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm flex items-center justify-center gap-2">
             <Save className="w-4 h-4" /> Save Budget
           </button>
@@ -154,25 +137,12 @@ function BudgetModal({ show, onClose, budget, onSave, month, year }) {
   );
 }
 
-// ─── Pacing Status ────────────────────────────────────────────────────────────
-
-function getPacingStatus(actual, ideal) {
-  if (!ideal) return { label: 'No Budget Set', color: 'slate', icon: Minus, pct: 0 };
-  const ratio = actual / ideal;
-  if (ratio >= 0.95 && ratio <= 1.1) return { label: 'On Track', color: 'emerald', icon: CheckCircle, pct: ratio * 100 };
-  if (ratio < 0.95) return { label: 'Under Pacing', color: 'yellow', icon: AlertCircle, pct: ratio * 100 };
-  return { label: 'Over Pacing', color: 'red', icon: XCircle, pct: ratio * 100 };
-}
-
-// ─── Daily Chart ──────────────────────────────────────────────────────────────
-
-function DailyChart({ dailyData, idealDailySpend, currentDay }) {
+function DailyChart({ dailyData, idealDailySpend }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
 
   useEffect(() => {
     if (!dailyData || dailyData.length === 0) return;
-    if (typeof window === 'undefined') return;
 
     function renderChart() {
       const el = canvasRef.current;
@@ -186,7 +156,7 @@ function DailyChart({ dailyData, idealDailySpend, currentDay }) {
       const barColors = dailyData.map(d => {
         if (!idealDailySpend) return 'rgba(99,102,241,0.8)';
         const ratio = d.spend / idealDailySpend;
-        if (ratio >= 0.9 && ratio <= 1.15) return 'rgba(52,211,153,0.85)';
+        if (ratio >= 0.9 && ratio <= 1.1) return 'rgba(52,211,153,0.85)';
         if (ratio < 0.9) return 'rgba(251,191,36,0.85)';
         return 'rgba(248,113,113,0.85)';
       });
@@ -221,13 +191,9 @@ function DailyChart({ dailyData, idealDailySpend, currentDay }) {
           maintainAspectRatio: false,
           interaction: { mode: 'index', intersect: false },
           plugins: {
-            legend: {
-              labels: { color: '#94a3b8', font: { size: 11 } },
-            },
+            legend: { labels: { color: '#94a3b8', font: { size: 11 } } },
             tooltip: {
-              callbacks: {
-                label: ctx => `${ctx.dataset.label}: $${ctx.parsed.y.toFixed(2)}`,
-              },
+              callbacks: { label: ctx => `${ctx.dataset.label}: $${ctx.parsed.y.toFixed(2)}` },
             },
           },
           scales: {
@@ -237,10 +203,7 @@ function DailyChart({ dailyData, idealDailySpend, currentDay }) {
               title: { display: true, text: 'Day of Month', color: '#64748b', font: { size: 11 } },
             },
             y: {
-              ticks: {
-                color: '#64748b', font: { size: 10 },
-                callback: v => `$${v}`,
-              },
+              ticks: { color: '#64748b', font: { size: 10 }, callback: v => `$${v}` },
               grid: { color: 'rgba(51,65,85,0.5)' },
               beginAtZero: true,
             },
@@ -258,7 +221,9 @@ function DailyChart({ dailyData, idealDailySpend, currentDay }) {
       document.head.appendChild(script);
     }
 
-    return () => { if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; } };
+    return () => {
+      if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; }
+    };
   }, [dailyData, idealDailySpend]);
 
   return (
@@ -268,42 +233,33 @@ function DailyChart({ dailyData, idealDailySpend, currentDay }) {
   );
 }
 
-// ─── Main Dashboard ───────────────────────────────────────────────────────────
-
 export default function PacingDashboard() {
   const { data: session, status } = useSession();
 
-  // Accounts
   const [accounts, setAccounts] = useState([]);
   const [selectedAccounts, setSelectedAccounts] = useState([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
 
-  // Month selector
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
 
-  // Budget
   const [budget, setBudget] = useState({ totalUSD: '', totalZAR: '', note: '' });
   const [showBudgetModal, setShowBudgetModal] = useState(false);
 
-  // Pacing data
   const [pacingData, setPacingData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(null);
 
-  // Load budget from localStorage when month/year changes
   useEffect(() => {
     const stored = loadBudget(selectedYear, selectedMonth);
     setBudget(stored);
   }, [selectedMonth, selectedYear]);
 
-  // Load accounts on sign in
   useEffect(() => {
     if (session) loadAccounts();
   }, [session]);
 
-  // Auto-refresh every 5 minutes if on current month
   useEffect(() => {
     const isCurrentMonth = selectedYear === now.getFullYear() && selectedMonth === (now.getMonth() + 1);
     if (!isCurrentMonth || selectedAccounts.length === 0) return;
@@ -331,11 +287,7 @@ export default function PacingDashboard() {
       const res = await fetch('/api/pacing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          accountIds: selectedAccounts,
-          month: selectedMonth,
-          year: selectedYear,
-        }),
+        body: JSON.stringify({ accountIds: selectedAccounts, month: selectedMonth, year: selectedYear }),
       });
       if (res.ok) {
         setPacingData(await res.json());
@@ -361,8 +313,6 @@ export default function PacingDashboard() {
     );
   }
 
-  // ── Derived values ──────────────────────────────────────────────────────────
-
   const daysInMonth = pacingData?.summary?.daysInMonth || new Date(selectedYear, selectedMonth, 0).getDate();
   const currentDay = pacingData?.summary?.currentDay || now.getDate();
   const isCurrentMonth = selectedYear === now.getFullYear() && selectedMonth === (now.getMonth() + 1);
@@ -378,56 +328,56 @@ export default function PacingDashboard() {
   const idealSpendToDate = idealDailySpend * currentDay;
   const remainingBudget = budgetUSD > 0 ? Math.max(0, budgetUSD - totalSpend) : 0;
   const remainingDays = Math.max(1, daysInMonth - currentDay + 1);
+
+  const avgDailySpend = currentDay > 1 ? totalSpend / (currentDay - 1) : todaySpend;
   const projectedMonthTotal = isCurrentMonth
-    ? totalSpend + (todaySpend > 0 ? todaySpend * remainingDays : (totalSpend / Math.max(1, currentDay - 1)) * remainingDays)
+    ? totalSpend + avgDailySpend * remainingDays
     : totalSpend;
 
   const pacingStatus = getPacingStatus(totalSpend, idealSpendToDate);
 
-  // Today improved = today's spend is closer to ideal vs yesterday
   const todayVsIdeal = idealDailySpend > 0 ? Math.abs(todaySpend - idealDailySpend) : 0;
   const yesterdayVsIdeal = idealDailySpend > 0 ? Math.abs(yesterdaySpend - idealDailySpend) : 0;
   const improvedToday = idealDailySpend > 0
     ? todayVsIdeal <= yesterdayVsIdeal
     : todaySpend >= yesterdaySpend;
 
-  const todayDiffFromIdeal = idealDailySpend > 0 ? ((todaySpend - idealDailySpend) / idealDailySpend * 100) : 0;
+  const todayDiffFromIdealPct = idealDailySpend > 0 ? ((todaySpend - idealDailySpend) / idealDailySpend * 100) : 0;
   const budgetUsedPct = budgetUSD > 0 ? Math.min((totalSpend / budgetUSD) * 100, 100) : 0;
   const pacingPct = idealSpendToDate > 0 ? (totalSpend / idealSpendToDate) * 100 : 0;
 
   const monthName = new Date(selectedYear, selectedMonth - 1).toLocaleString('default', { month: 'long' });
 
-  // Month options for selector
-  const monthOptions = [];
-  for (let m = 1; m <= 12; m++) {
-    monthOptions.push({ value: m, label: new Date(selectedYear, m - 1).toLocaleString('default', { month: 'long' }) });
-  }
+  const monthOptions = Array.from({ length: 12 }, (_, i) => ({
+    value: i + 1,
+    label: new Date(selectedYear, i).toLocaleString('default', { month: 'long' }),
+  }));
 
-  // Per-client rows
+  const activeAccountCount = selectedAccounts.length;
+  const perAccountBudget = budgetUSD > 0 && activeAccountCount > 0 ? budgetUSD / activeAccountCount : 0;
+
   const clientRows = accounts
     .filter(a => selectedAccounts.includes(a.id))
     .map(a => {
       const totals = pacingData?.accountTotals?.find(t => t.accountId === a.id);
-      const accountBudget = budgetUSD > 0 && accounts.length > 0 ? budgetUSD / accounts.filter(x => selectedAccounts.includes(x.id)).length : 0;
       return {
         ...a,
         totalSpend: totals?.totalSpend || 0,
         todaySpend: totals?.todaySpend || 0,
         yesterdaySpend: totals?.yesterdaySpend || 0,
-        pct: accountBudget > 0 ? (totals?.totalSpend || 0) / accountBudget * 100 : 0,
+        pct: perAccountBudget > 0 ? ((totals?.totalSpend || 0) / perAccountBudget) * 100 : 0,
         improved: (totals?.todaySpend || 0) >= (totals?.yesterdaySpend || 0),
       };
     });
 
-  // ── Status UI helpers ───────────────────────────────────────────────────────
-
-  const statusColors = {
-    emerald: { bg: 'bg-emerald-900/40', border: 'border-emerald-500', text: 'text-emerald-400', badge: 'bg-emerald-800 text-emerald-200' },
-    yellow:  { bg: 'bg-yellow-900/30',  border: 'border-yellow-500',  text: 'text-yellow-400',  badge: 'bg-yellow-800 text-yellow-200' },
-    red:     { bg: 'bg-red-900/30',     border: 'border-red-500',     text: 'text-red-400',     badge: 'bg-red-800 text-red-200' },
-    slate:   { bg: 'bg-slate-800',      border: 'border-slate-600',   text: 'text-slate-400',   badge: 'bg-slate-700 text-slate-300' },
+  const scMap = {
+    emerald: { bg: 'bg-emerald-900/40', border: 'border-emerald-500', text: 'text-emerald-400', badge: 'bg-emerald-800 text-emerald-200', bar: 'bg-emerald-500' },
+    yellow:  { bg: 'bg-yellow-900/30',  border: 'border-yellow-500',  text: 'text-yellow-400',  badge: 'bg-yellow-800 text-yellow-200',  bar: 'bg-yellow-500' },
+    red:     { bg: 'bg-red-900/30',     border: 'border-red-500',     text: 'text-red-400',     badge: 'bg-red-800 text-red-200',        bar: 'bg-red-500' },
+    slate:   { bg: 'bg-slate-800',      border: 'border-slate-600',   text: 'text-slate-400',   badge: 'bg-slate-700 text-slate-300',    bar: 'bg-slate-500' },
   };
-  const sc = statusColors[pacingStatus.color];
+  const sc = scMap[pacingStatus.color];
+  const StatusIcon = pacingStatus.icon;
 
   if (status === 'loading') return <LoadingScreen />;
   if (!session) return <SignInScreen />;
@@ -435,7 +385,7 @@ export default function PacingDashboard() {
   return (
     <div className="min-h-screen bg-slate-900 text-white">
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="bg-slate-800 border-b border-slate-700">
         <div className="max-w-screen-xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -449,17 +399,15 @@ export default function PacingDashboard() {
           </div>
           <div className="flex items-center gap-3">
             {lastRefresh && (
-              <span className="text-xs text-slate-500">
-                Updated {lastRefresh.toLocaleTimeString()}
-              </span>
+              <span className="text-xs text-slate-500">Updated {lastRefresh.toLocaleTimeString()}</span>
             )}
             <button onClick={loadPacing} disabled={loading || selectedAccounts.length === 0}
-              className="flex items-center gap-2 px-3 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 text-sm disabled:opacity-40">
+              className="flex items-center gap-2 px-3 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 text-sm disabled:opacity-40 transition-colors">
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
               Refresh
             </button>
             <button onClick={() => signOut()}
-              className="px-3 py-2 bg-red-700 text-white rounded-lg text-sm hover:bg-red-600">
+              className="px-3 py-2 bg-red-700 text-white rounded-lg text-sm hover:bg-red-600 transition-colors">
               Sign Out
             </button>
           </div>
@@ -468,10 +416,10 @@ export default function PacingDashboard() {
 
       <div className="max-w-screen-xl mx-auto px-6 py-6 grid grid-cols-12 gap-6">
 
-        {/* ── Sidebar ── */}
+        {/* Sidebar */}
         <div className="col-span-3 space-y-4">
 
-          {/* Month / Year picker */}
+          {/* Month/Year */}
           <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3 flex items-center gap-2">
               <Calendar className="w-3.5 h-3.5" /> Reporting Period
@@ -505,7 +453,7 @@ export default function PacingDashboard() {
             )}
           </div>
 
-          {/* Budget card */}
+          {/* Budget */}
           <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-2">
@@ -528,14 +476,18 @@ export default function PacingDashboard() {
                     <div className="text-xs text-slate-400">ZAR Total Budget</div>
                   </div>
                 )}
-                <div className="pt-2 border-t border-slate-700">
+                <div className="pt-2 border-t border-slate-700 space-y-1">
                   <div className="flex justify-between text-xs">
                     <span className="text-slate-400">Ideal daily</span>
                     <span className="text-white font-mono">{fmtD(idealDailySpend)}</span>
                   </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">Per client</span>
+                    <span className="text-slate-300 font-mono">{fmtD(perAccountBudget)}</span>
+                  </div>
                 </div>
                 {budget.note && (
-                  <div className="text-xs text-slate-500 italic">{budget.note}</div>
+                  <div className="text-xs text-slate-500 italic pt-1">{budget.note}</div>
                 )}
               </div>
             ) : (
@@ -546,11 +498,12 @@ export default function PacingDashboard() {
             )}
           </div>
 
-          {/* Client selector */}
+          {/* Clients */}
           <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-2">
                 <Users className="w-3.5 h-3.5" /> Clients
+                <span className="text-blue-400">({selectedAccounts.length}/{accounts.length})</span>
               </h3>
               {loadingAccounts && <RefreshCw className="w-3 h-3 text-slate-400 animate-spin" />}
             </div>
@@ -564,7 +517,7 @@ export default function PacingDashboard() {
                 None
               </button>
             </div>
-            <div className="space-y-1.5 max-h-64 overflow-y-auto">
+            <div className="space-y-1.5 max-h-72 overflow-y-auto">
               {accounts.map(account => {
                 const selected = selectedAccounts.includes(account.id);
                 const totals = pacingData?.accountTotals?.find(t => t.accountId === account.id);
@@ -581,7 +534,9 @@ export default function PacingDashboard() {
                       <div className="text-xs font-semibold text-white truncate">{account.name}</div>
                       <div className="text-xs text-slate-500 font-mono">ID: {account.id}</div>
                       {totals && (
-                        <div className="text-xs text-emerald-400 font-mono mt-0.5">{fmtD(totals.totalSpend)} spent</div>
+                        <div className="text-xs text-emerald-400 font-mono mt-0.5">
+                          {fmtD(totals.totalSpend)} spent
+                        </div>
                       )}
                     </div>
                   </label>
@@ -594,9 +549,8 @@ export default function PacingDashboard() {
           </div>
         </div>
 
-        {/* ── Main Content ── */}
+        {/* Main Content */}
         <div className="col-span-9 space-y-6">
-
           {selectedAccounts.length === 0 ? (
             <div className="bg-slate-800 rounded-xl p-16 text-center border border-slate-700">
               <Users className="w-14 h-14 text-slate-600 mx-auto mb-4" />
@@ -605,21 +559,17 @@ export default function PacingDashboard() {
             </div>
           ) : (
             <>
-              {/* ── Row 1: Summary Cards ── */}
+              {/* Summary Cards */}
               <div className="grid grid-cols-4 gap-4">
-                {/* Monthly Budget */}
                 <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
                   <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Monthly Budget</div>
-                  <div className="text-2xl font-bold text-white mb-1">
-                    {budgetUSD > 0 ? fmtD(budgetUSD) : '-'}
-                  </div>
+                  <div className="text-2xl font-bold text-white mb-1">{budgetUSD > 0 ? fmtD(budgetUSD) : '-'}</div>
                   <button onClick={() => setShowBudgetModal(true)}
                     className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
                     <Edit3 className="w-3 h-3" /> {budgetUSD > 0 ? 'Edit budget' : 'Set budget'}
                   </button>
                 </div>
 
-                {/* Spent to Date */}
                 <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
                   <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Spent to Date</div>
                   <div className="text-2xl font-bold text-white mb-1">{fmtD(totalSpend)}</div>
@@ -628,22 +578,25 @@ export default function PacingDashboard() {
                   </div>
                 </div>
 
-                {/* Remaining */}
                 <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
                   <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Remaining</div>
                   <div className={`text-2xl font-bold mb-1 ${budgetUSD > 0 && totalSpend > budgetUSD ? 'text-red-400' : 'text-white'}`}>
                     {budgetUSD > 0 ? fmtD(remainingBudget) : '-'}
                   </div>
                   <div className="text-xs text-slate-400">
-                    {budgetUSD > 0 ? `${remainingDays} days left` : 'Set a budget to track'}
+                    {budgetUSD > 0 ? `${remainingDays} days left` : 'Set a budget'}
                   </div>
                 </div>
 
-                {/* Projected */}
                 <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
-                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Projected Total</div>
-                  <div className={`text-2xl font-bold mb-1 ${budgetUSD > 0 && projectedMonthTotal > budgetUSD * 1.05 ? 'text-red-400' : budgetUSD > 0 && projectedMonthTotal < budgetUSD * 0.9 ? 'text-yellow-400' : 'text-white'}`}>
-                    {isCurrentMonth ? fmtD(projectedMonthTotal) : fmtD(totalSpend)}
+                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">
+                    {isCurrentMonth ? 'Projected Total' : 'Final Spend'}
+                  </div>
+                  <div className={`text-2xl font-bold mb-1 ${
+                    budgetUSD > 0 && projectedMonthTotal > budgetUSD * 1.05 ? 'text-red-400' :
+                    budgetUSD > 0 && projectedMonthTotal < budgetUSD * 0.9 ? 'text-yellow-400' : 'text-white'
+                  }`}>
+                    {fmtD(isCurrentMonth ? projectedMonthTotal : totalSpend)}
                   </div>
                   <div className="text-xs text-slate-400">
                     {isCurrentMonth ? 'End of month estimate' : 'Final spend'}
@@ -651,7 +604,7 @@ export default function PacingDashboard() {
                 </div>
               </div>
 
-              {/* ── Row 2: Pacing Status + Today vs Yesterday ── */}
+              {/* Pacing Status + Today vs Yesterday */}
               <div className="grid grid-cols-2 gap-4">
 
                 {/* Pacing Status */}
@@ -662,9 +615,8 @@ export default function PacingDashboard() {
                       {monthName} {selectedYear}
                     </span>
                   </div>
-
                   <div className="flex items-center gap-4 mb-5">
-                    <pacingStatus.icon className={`w-12 h-12 ${sc.text} flex-shrink-0`} />
+                    <StatusIcon className={`w-12 h-12 ${sc.text} flex-shrink-0`} />
                     <div>
                       <div className={`text-3xl font-bold ${sc.text}`}>{pacingStatus.label}</div>
                       <div className="text-sm text-slate-400 mt-0.5">
@@ -683,27 +635,19 @@ export default function PacingDashboard() {
                           <span className="text-white font-mono">{fmtD(totalSpend)}</span>
                         </div>
                         <div className="flex justify-between text-xs mb-2">
-                          <span className="text-slate-400">Ideal spend by day {currentDay}</span>
+                          <span className="text-slate-400">Ideal by day {currentDay}</span>
                           <span className="text-slate-300 font-mono">{fmtD(idealSpendToDate)}</span>
                         </div>
-                        {/* Budget progress bar */}
                         <div className="h-3 bg-slate-700 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all ${
-                              pacingStatus.color === 'emerald' ? 'bg-emerald-500' :
-                              pacingStatus.color === 'yellow' ? 'bg-yellow-500' : 'bg-red-500'
-                            }`}
-                            style={{ width: `${Math.min(budgetUsedPct, 100)}%` }}
-                          />
+                          <div className={`h-full rounded-full transition-all ${sc.bar}`}
+                            style={{ width: `${Math.min(budgetUsedPct, 100)}%` }} />
                         </div>
                         <div className="flex justify-between text-xs mt-1">
                           <span className="text-slate-500">{fmtD(0)}</span>
-                          <span className="text-slate-400 font-mono">{fmt(budgetUsedPct, 1)}% used</span>
+                          <span className="text-slate-400">{fmt(budgetUsedPct, 1)}% used</span>
                           <span className="text-slate-500">{fmtD(budgetUSD)}</span>
                         </div>
                       </div>
-
-                      {/* Time progress */}
                       <div>
                         <div className="flex justify-between text-xs mb-1">
                           <span className="text-slate-400">Time elapsed</span>
@@ -722,11 +666,8 @@ export default function PacingDashboard() {
                 <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
                   <h3 className="text-sm font-bold text-white uppercase tracking-wide mb-4">Today vs Yesterday</h3>
 
-                  {/* Improvement indicator */}
                   <div className={`flex items-center gap-3 mb-5 p-4 rounded-xl border ${
-                    improvedToday
-                      ? 'bg-emerald-900/30 border-emerald-600'
-                      : 'bg-red-900/20 border-red-700'
+                    improvedToday ? 'bg-emerald-900/30 border-emerald-600' : 'bg-red-900/20 border-red-700'
                   }`}>
                     {improvedToday
                       ? <TrendingUp className="w-10 h-10 text-emerald-400 flex-shrink-0" />
@@ -738,41 +679,38 @@ export default function PacingDashboard() {
                       </div>
                       <div className="text-xs text-slate-400 mt-0.5">
                         {idealDailySpend > 0
-                          ? `Today is ${Math.abs(todayDiffFromIdeal).toFixed(1)}% ${todayDiffFromIdeal >= 0 ? 'above' : 'below'} ideal daily spend`
-                          : 'Set a budget to track ideal pacing'}
+                          ? `Today is ${Math.abs(todayDiffFromIdealPct).toFixed(1)}% ${todayDiffFromIdealPct >= 0 ? 'above' : 'below'} ideal`
+                          : 'Set a budget to see ideal pacing'}
                       </div>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
-                    {/* Today */}
                     <div className="bg-slate-700/60 rounded-lg p-4">
                       <div className="text-xs text-slate-400 mb-1 font-medium">Today</div>
                       <div className="text-2xl font-bold text-white">{fmtD(todaySpend)}</div>
                       {idealDailySpend > 0 && (
                         <div className={`text-xs mt-1 font-medium flex items-center gap-1 ${
-                          todaySpend >= idealDailySpend * 0.9 && todaySpend <= idealDailySpend * 1.1
-                            ? 'text-emerald-400'
-                            : todaySpend < idealDailySpend * 0.9
-                            ? 'text-yellow-400' : 'text-red-400'
+                          Math.abs(todayDiffFromIdealPct) <= 10 ? 'text-emerald-400' :
+                          todaySpend < idealDailySpend ? 'text-yellow-400' : 'text-red-400'
                         }`}>
-                          {todaySpend >= idealDailySpend * 0.9 && todaySpend <= idealDailySpend * 1.1
+                          {Math.abs(todayDiffFromIdealPct) <= 10
                             ? <CheckCircle className="w-3 h-3" />
-                            : todaySpend < idealDailySpend * 0.9
+                            : todaySpend < idealDailySpend
                             ? <ChevronDown className="w-3 h-3" />
                             : <ChevronUp className="w-3 h-3" />
                           }
-                          {idealDailySpend > 0 ? `Ideal: ${fmtD(idealDailySpend)}` : ''}
+                          Ideal: {fmtD(idealDailySpend)}
                         </div>
                       )}
                     </div>
-
-                    {/* Yesterday */}
                     <div className="bg-slate-700/60 rounded-lg p-4">
                       <div className="text-xs text-slate-400 mb-1 font-medium">Yesterday</div>
                       <div className="text-2xl font-bold text-white">{fmtD(yesterdaySpend)}</div>
-                      {todaySpend !== yesterdaySpend && yesterdaySpend > 0 && (
-                        <div className={`text-xs mt-1 font-medium flex items-center gap-1 ${todaySpend >= yesterdaySpend ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {yesterdaySpend > 0 && (
+                        <div className={`text-xs mt-1 font-medium flex items-center gap-1 ${
+                          todaySpend >= yesterdaySpend ? 'text-emerald-400' : 'text-red-400'
+                        }`}>
                           {todaySpend >= yesterdaySpend
                             ? <><ChevronUp className="w-3 h-3" /> +{fmtD(todaySpend - yesterdaySpend)} today</>
                             : <><ChevronDown className="w-3 h-3" /> -{fmtD(yesterdaySpend - todaySpend)} today</>
@@ -782,10 +720,9 @@ export default function PacingDashboard() {
                     </div>
                   </div>
 
-                  {/* Daily need to hit budget */}
                   {budgetUSD > 0 && isCurrentMonth && (
-                    <div className="mt-4 pt-4 border-t border-slate-700">
-                      <div className="flex justify-between text-xs mb-1">
+                    <div className="mt-4 pt-4 border-t border-slate-700 space-y-1">
+                      <div className="flex justify-between text-xs">
                         <span className="text-slate-400">Needed per day to hit budget</span>
                         <span className="text-white font-bold font-mono">
                           {fmtD(remainingDays > 0 ? remainingBudget / remainingDays : 0)}
@@ -800,17 +737,25 @@ export default function PacingDashboard() {
                 </div>
               </div>
 
-              {/* ── Row 3: Daily Spend Chart ── */}
+              {/* Daily Chart */}
               <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-bold text-white uppercase tracking-wide">
                     Daily Spend — {monthName} {selectedYear}
                   </h3>
                   <div className="flex items-center gap-4 text-xs text-slate-400">
-                    <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-emerald-500"></div>On Track</div>
-                    <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-yellow-500"></div>Under</div>
-                    <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-red-400"></div>Over</div>
-                    <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-blue-300"></div>Ideal</div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-3 rounded bg-emerald-500"></div>On Track
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-3 rounded bg-yellow-500"></div>Under
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-3 rounded bg-red-400"></div>Over
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-6 border-t-2 border-dashed border-blue-300"></div>Ideal
+                    </div>
                   </div>
                 </div>
                 {loading ? (
@@ -821,7 +766,6 @@ export default function PacingDashboard() {
                   <DailyChart
                     dailyData={pacingData.dailyData}
                     idealDailySpend={idealDailySpend}
-                    currentDay={currentDay}
                   />
                 ) : (
                   <div className="flex items-center justify-center h-64 text-slate-500 text-sm">
@@ -830,10 +774,13 @@ export default function PacingDashboard() {
                 )}
               </div>
 
-              {/* ── Row 4: Per-Client Breakdown ── */}
+              {/* Client Breakdown Table */}
               <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
                 <h3 className="text-sm font-bold text-white uppercase tracking-wide mb-4 flex items-center gap-2">
                   <Users className="w-4 h-4" /> Client Breakdown
+                  <span className="text-slate-500 text-xs font-normal normal-case">
+                    {activeAccountCount} clients selected
+                  </span>
                 </h3>
                 {clientRows.length === 0 ? (
                   <p className="text-slate-500 text-sm text-center py-6">No client data available</p>
@@ -842,18 +789,16 @@ export default function PacingDashboard() {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-slate-700">
-                          <th className="text-left pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide">Client</th>
-                          <th className="text-right pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide">Today</th>
-                          <th className="text-right pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide">Yesterday</th>
-                          <th className="text-right pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide">Month Total</th>
-                          <th className="text-right pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide">vs Budget</th>
-                          <th className="text-center pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide">Today Trend</th>
-                          <th className="text-left pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide w-40">Pacing Bar</th>
+                          {['Client', 'Today', 'Yesterday', 'Month Total', '% of Budget', 'Trend', 'Pacing Bar'].map(h => (
+                            <th key={h} className={`pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide ${h === 'Client' || h === 'Pacing Bar' ? 'text-left' : 'text-right'} ${h === 'Trend' ? 'text-center' : ''}`}>
+                              {h}
+                            </th>
+                          ))}
                         </tr>
                       </thead>
                       <tbody>
                         {clientRows.map((client, i) => (
-                          <tr key={client.id} className={`border-b border-slate-700/50 ${i % 2 === 0 ? '' : 'bg-slate-700/20'}`}>
+                          <tr key={client.id} className={`border-b border-slate-700/50 ${i % 2 !== 0 ? 'bg-slate-700/20' : ''}`}>
                             <td className="py-3">
                               <div className="font-semibold text-white text-xs">{client.name}</div>
                               <div className="text-xs text-slate-500 font-mono">ID: {client.id}</div>
@@ -871,11 +816,15 @@ export default function PacingDashboard() {
                             </td>
                             <td className="py-3 text-center">
                               {client.improved
-                                ? <div className="flex items-center justify-center gap-1 text-emerald-400 text-xs font-medium"><TrendingUp className="w-3.5 h-3.5" /> Up</div>
-                                : <div className="flex items-center justify-center gap-1 text-red-400 text-xs font-medium"><TrendingDown className="w-3.5 h-3.5" /> Down</div>
+                                ? <div className="flex items-center justify-center gap-1 text-emerald-400 text-xs font-medium">
+                                    <TrendingUp className="w-3.5 h-3.5" /> Up
+                                  </div>
+                                : <div className="flex items-center justify-center gap-1 text-red-400 text-xs font-medium">
+                                    <TrendingDown className="w-3.5 h-3.5" /> Down
+                                  </div>
                               }
                             </td>
-                            <td className="py-3">
+                            <td className="py-3 w-32">
                               {budgetUSD > 0 ? (
                                 <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
                                   <div
@@ -897,12 +846,20 @@ export default function PacingDashboard() {
                         <tfoot>
                           <tr className="bg-slate-700/40">
                             <td className="py-3 font-bold text-white text-xs uppercase">Total</td>
-                            <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtD(clientRows.reduce((s, r) => s + r.todaySpend, 0))}</td>
-                            <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{fmtD(clientRows.reduce((s, r) => s + r.yesterdaySpend, 0))}</td>
-                            <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtD(totalSpend)}</td>
+                            <td className="py-3 text-right font-bold text-white font-mono text-xs">
+                              {fmtD(clientRows.reduce((s, r) => s + r.todaySpend, 0))}
+                            </td>
+                            <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">
+                              {fmtD(clientRows.reduce((s, r) => s + r.yesterdaySpend, 0))}
+                            </td>
+                            <td className="py-3 text-right font-bold text-white font-mono text-xs">
+                              {fmtD(totalSpend)}
+                            </td>
                             <td className="py-3 text-right font-bold text-xs">
                               {budgetUSD > 0
-                                ? <span className={`${budgetUsedPct > 100 ? 'text-red-400' : budgetUsedPct > 75 ? 'text-yellow-400' : 'text-emerald-400'}`}>{fmt(budgetUsedPct, 1)}%</span>
+                                ? <span className={`${budgetUsedPct > 100 ? 'text-red-400' : budgetUsedPct > 75 ? 'text-yellow-400' : 'text-emerald-400'}`}>
+                                    {fmt(budgetUsedPct, 1)}%
+                                  </span>
                                 : <span className="text-slate-500">-</span>
                               }
                             </td>
