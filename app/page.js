@@ -704,20 +704,19 @@ Please write a structured report with:
 Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
 
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch('/api/ai-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1000,
-          messages: [{ role: 'user', content: prompt }],
-        }),
+        body: JSON.stringify({ prompt }),
       });
       const data = await response.json();
-      const text = data.content?.map(b => b.text || '').join('') || 'Failed to generate report.';
-      setAiReport(text);
+      if (!response.ok) {
+        setAiReport(`❌ Error (${response.status}): ${data.error || 'Unknown server error'}\n\nCheck your server logs or .env.local for ANTHROPIC_API_KEY.`);
+      } else {
+        setAiReport(data.report || 'No report generated.');
+      }
     } catch (err) {
-      setAiReport('Error generating report. Please try again.');
+      setAiReport(`❌ Network error: ${err.message}\n\nMake sure the /api/ai-report route file exists and has been deployed.`);
     }
     setAiLoading(false);
   }
