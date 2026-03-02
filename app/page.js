@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import {
   TrendingUp, TrendingDown, DollarSign, RefreshCw,
@@ -17,16 +17,16 @@ function fmt(n, decimals = 2) {
 function fmtD(n) { return `$${fmt(n)}`; }
 function fmtR(n) { return `R${fmt(n)}`; }
 
-// ── Budget storage (localStorage, per date range) ─────────────────────────────
-function getBudgetKey(startDate, endDate) { return `pacing_budget_${startDate}_${endDate}`; }
-function loadBudget(startDate, endDate) {
+// ── Budget storage (localStorage, per calendar month — persists across date range changes) ──
+function getBudgetKey(year, month) { return `pacing_budget_${year}_${String(month).padStart(2,'0')}`; }
+function loadBudget(year, month) {
   try {
-    const raw = localStorage.getItem(getBudgetKey(startDate, endDate));
+    const raw = localStorage.getItem(getBudgetKey(year, month));
     return raw ? JSON.parse(raw) : { totalUSD: '', totalZAR: '', note: '' };
   } catch { return { totalUSD: '', totalZAR: '', note: '' }; }
 }
-function saveBudget(startDate, endDate, data) {
-  try { localStorage.setItem(getBudgetKey(startDate, endDate), JSON.stringify(data)); } catch {}
+function saveBudget(year, month, data) {
+  try { localStorage.setItem(getBudgetKey(year, month), JSON.stringify(data)); } catch {}
 }
 
 // ── Pacing status ─────────────────────────────────────────────────────────────
@@ -183,17 +183,18 @@ function LoadingScreen() {
 }
 
 // ── Budget Modal ──────────────────────────────────────────────────────────────
-function BudgetModal({ show, onClose, budget, onSave, startDate, endDate }) {
+function BudgetModal({ show, onClose, budget, onSave, month, year }) {
   const [form, setForm] = useState(budget);
   useEffect(() => setForm(budget), [budget]);
   if (!show) return null;
+  const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
       <div className="bg-slate-800 rounded-2xl w-full max-w-md border border-slate-700 shadow-2xl">
         <div className="flex items-center justify-between p-6 border-b border-slate-700">
           <div>
-            <h2 className="text-lg font-bold text-white">Edit Budget</h2>
-            <p className="text-sm text-slate-400">{startDate} → {endDate}</p>
+            <h2 className="text-lg font-bold text-white">Edit Monthly Budget</h2>
+            <p className="text-sm text-slate-400">{monthName} {year} — applies to all date ranges in this month</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
@@ -457,14 +458,20 @@ export default function PacingDashboard() {
 
   const now = new Date();
 
-  // Load budget when dates change
-  useEffect(() => {
-    const stored = loadBudget(startDate, endDate);
-    setBudget(stored);
-  }, [startDate, endDate]);
+  // Derive the budget month from the startDate (budget persists per calendar month)
+  const budgetYear = parseInt(startDate.split('-')[0]);
+  const budgetMonth = parseInt(startDate.split('-')[1]);
 
-  // Load accounts on login
-  useEffect(() => { if (session) { loadAccounts(); loadExclusions(); } }, [session]);
+  // Load budget when start month changes
+  useEffect(() => {
+    const stored = loadBudget(budgetYear, budgetMonth);
+    setBudget(stored);
+  }, [budgetYear, budgetMonth]);
+
+  // Load accounts on login — load exclusions first, then accounts so exclusions apply immediately
+  useEffect(() => {
+    if (session) { loadExclusions().then(() => loadAccounts()); }
+  }, [session]);
 
   // Load campaign groups/campaigns when accounts change
   useEffect(() => {
@@ -491,12 +498,16 @@ export default function PacingDashboard() {
       if (res.ok) {
         const data = await res.json();
         setAccounts(data);
-        // Will be updated after exclusions load
-        setSelectedAccounts(data.map(a => a.id));
+        // Apply any saved exclusions immediately using the ref
+        const excl = excludedRef.current || [];
+        setSelectedAccounts(data.map(a => a.id).filter(id => !excl.includes(id)));
       }
     } catch (err) { console.error(err); }
     setLoadingAccounts(false);
   }
+
+  // Use a ref to hold exclusions so loadAccounts can read the latest value synchronously
+  const excludedRef = React.useRef([]);
 
   async function loadExclusions() {
     try {
@@ -504,9 +515,8 @@ export default function PacingDashboard() {
       if (res.ok) {
         const data = await res.json();
         const excl = data.excludedAccountIds || [];
+        excludedRef.current = excl;
         setExcludedAccounts(excl);
-        // Remove excluded from selected
-        setSelectedAccounts(prev => prev.filter(id => !excl.includes(id)));
       }
     } catch (err) { console.error(err); }
   }
@@ -592,7 +602,7 @@ export default function PacingDashboard() {
 
   function handleBudgetSave(newBudget) {
     setBudget(newBudget);
-    saveBudget(startDate, endDate, newBudget);
+    saveBudget(budgetYear, budgetMonth, newBudget);
   }
 
   // Helpers
@@ -1223,7 +1233,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
       </div>
 
       <BudgetModal show={showBudgetModal} onClose={() => setShowBudgetModal(false)}
-        budget={budget} onSave={handleBudgetSave} startDate={startDate} endDate={endDate} />
+        budget={budget} onSave={handleBudgetSave} month={budgetMonth} year={budgetYear} />
 
       <AIReportModal show={showAIModal} onClose={() => setShowAIModal(false)}
         reportText={aiReport} loading={aiLoading} />
