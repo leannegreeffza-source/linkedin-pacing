@@ -616,7 +616,7 @@ export default function PacingDashboard() {
     return (filtered) => { const toRemove = new Set(filtered.map(i => i.id)); setter(prev => prev.filter(id => !toRemove.has(id))); };
   }
 
-  // Derived values
+  // Derived values — date range data
   const totalSpend = pacingData?.summary?.totalSpend || 0;
   const todaySpend = pacingData?.summary?.todaySpend || 0;
   const yesterdaySpend = pacingData?.summary?.yesterdaySpend || 0;
@@ -626,13 +626,39 @@ export default function PacingDashboard() {
   const budgetUSD = parseFloat(budget.totalUSD) || 0;
   const budgetZAR = parseFloat(budget.totalZAR) || 0;
 
-  const idealDailySpend = budgetUSD > 0 ? budgetUSD / totalDays : 0;
+  // Budget is always scoped to the FULL calendar month (from budgetYear/budgetMonth)
+  // so forecasting is always month-aware regardless of the selected date range
+  const daysInBudgetMonth = new Date(budgetYear, budgetMonth, 0).getDate();
+  const todayDate = now.getDate();
+  const daysRemainingInMonth = Math.max(0, daysInBudgetMonth - todayDate);
+  const isCurrentMonth = budgetYear === now.getFullYear() && budgetMonth === (now.getMonth() + 1);
+
+  // Ideal daily is always budget / full month days
+  const idealDailySpend = budgetUSD > 0 ? budgetUSD / daysInBudgetMonth : 0;
+
+  // Ideal spend by today (day N of the month) — for pacing status
+  const idealSpendToToday = idealDailySpend * todayDate;
+
+  // Pacing compares total spend in selected range vs ideal for same period
   const idealSpendToDate = idealDailySpend * daysElapsed;
+
+  // Remaining budget = full month budget minus all spend so far this month
   const remainingBudget = budgetUSD > 0 ? Math.max(0, budgetUSD - totalSpend) : 0;
-  const remainingDays = Math.max(1, totalDays - daysElapsed + 1);
+
+  // Avg daily spend based on days that have data
   const avgDailySpend = daysElapsed > 1 ? totalSpend / (daysElapsed - 1) : todaySpend;
+
+  // Projected end-of-month total = spend so far + avg daily * days left in month
+  const projectedMonthTotal = isCurrentMonth
+    ? totalSpend + avgDailySpend * daysRemainingInMonth
+    : totalSpend;
+
+  // Needed per day from today to hit the full month budget
+  const neededDailyToHitBudget = daysRemainingInMonth > 0
+    ? remainingBudget / daysRemainingInMonth
+    : 0;
+
   const isCurrentPeriod = endDate === todayStr();
-  const projectedTotal = isCurrentPeriod ? totalSpend + avgDailySpend * remainingDays : totalSpend;
 
   const pacingStatus = getPacingStatus(totalSpend, idealSpendToDate);
   const todayDiffFromIdealPct = idealDailySpend > 0 ? ((todaySpend - idealDailySpend) / idealDailySpend * 100) : 0;
@@ -696,7 +722,7 @@ YESTERDAY'S SPEND: $${yesterdaySpend.toFixed(2)}
 IDEAL DAILY SPEND: ${idealDailySpend > 0 ? '$' + idealDailySpend.toFixed(2) : 'N/A'}
 DAYS ELAPSED: ${daysElapsed} of ${totalDays}
 REMAINING BUDGET: ${budgetUSD > 0 ? '$' + remainingBudget.toFixed(2) : 'N/A'}
-PROJECTED END-OF-PERIOD TOTAL: ${isCurrentPeriod ? '$' + projectedTotal.toFixed(2) : 'N/A (completed period)'}
+PROJECTED END-OF-MONTH TOTAL: ${isCurrentMonth ? '$' + projectedMonthTotal.toFixed(2) : 'N/A (completed period)'}
 NUMBER OF ACTIVE ACCOUNTS: ${activeAccountCount}
 ${excludedAccounts.length > 0 ? `EXCLUDED ACCOUNTS: ${excludedAccounts.length}` : ''}
 ${budget.note ? `BUDGET NOTES: ${budget.note}` : ''}
@@ -864,9 +890,25 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                 )}
                 <div className="pt-2 border-t border-slate-700 space-y-1">
                   <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">Days in month</span>
+                    <span className="text-white font-mono">{daysInBudgetMonth}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
                     <span className="text-slate-400">Ideal daily</span>
                     <span className="text-white font-mono">{fmtD(idealDailySpend)}</span>
                   </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">Days left in month</span>
+                    <span className="text-slate-300 font-mono">{daysRemainingInMonth}</span>
+                  </div>
+                  {isCurrentMonth && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-slate-400">Month-end forecast</span>
+                      <span className={`font-mono font-bold ${projectedMonthTotal > budgetUSD * 1.05 ? 'text-red-400' : projectedMonthTotal < budgetUSD * 0.9 ? 'text-yellow-400' : 'text-emerald-400'}`}>
+                        {fmtD(projectedMonthTotal)}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-xs">
                     <span className="text-slate-400">Per client ({activeAccountCount})</span>
                     <span className="text-slate-300 font-mono">{fmtD(perAccountBudget)}</span>
@@ -989,19 +1031,19 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                   <div className={`text-2xl font-bold mb-1 ${budgetUSD > 0 && totalSpend > budgetUSD ? 'text-red-400' : 'text-white'}`}>
                     {budgetUSD > 0 ? fmtD(remainingBudget) : '-'}
                   </div>
-                  <div className="text-xs text-slate-400">{budgetUSD > 0 ? `${remainingDays} days left` : 'Set a budget'}</div>
+                  <div className="text-xs text-slate-400">{budgetUSD > 0 ? `${daysRemainingInMonth} days left in month` : 'Set a budget'}</div>
                 </div>
                 <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
                   <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">
-                    {isCurrentPeriod ? 'Projected Total' : 'Final Spend'}
+                    {isCurrentMonth ? 'Month-End Forecast' : 'Final Spend'}
                   </div>
                   <div className={`text-2xl font-bold mb-1 ${
-                    budgetUSD > 0 && projectedTotal > budgetUSD * 1.05 ? 'text-red-400' :
-                    budgetUSD > 0 && projectedTotal < budgetUSD * 0.9 ? 'text-yellow-400' : 'text-white'
+                    budgetUSD > 0 && projectedMonthTotal > budgetUSD * 1.05 ? 'text-red-400' :
+                    budgetUSD > 0 && projectedMonthTotal < budgetUSD * 0.9 ? 'text-yellow-400' : 'text-white'
                   }`}>
-                    {fmtD(isCurrentPeriod ? projectedTotal : totalSpend)}
+                    {fmtD(isCurrentMonth ? projectedMonthTotal : totalSpend)}
                   </div>
-                  <div className="text-xs text-slate-400">{isCurrentPeriod ? 'End of period estimate' : 'Final spend'}</div>
+                  <div className="text-xs text-slate-400">{isCurrentMonth ? `Based on avg ${fmtD(avgDailySpend)}/day` : 'Final spend'}</div>
                 </div>
               </div>
 
@@ -1101,11 +1143,11 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                       )}
                     </div>
                   </div>
-                  {budgetUSD > 0 && isCurrentPeriod && (
+                  {budgetUSD > 0 && isCurrentMonth && (
                     <div className="mt-4 pt-4 border-t border-slate-700 space-y-1">
                       <div className="flex justify-between text-xs">
                         <span className="text-slate-400">Needed per day to hit budget</span>
-                        <span className="text-white font-bold font-mono">{fmtD(remainingDays > 0 ? remainingBudget / remainingDays : 0)}</span>
+                        <span className="text-white font-bold font-mono">{fmtD(neededDailyToHitBudget)}</span>
                       </div>
                       <div className="flex justify-between text-xs">
                         <span className="text-slate-400">Original daily target</span>
