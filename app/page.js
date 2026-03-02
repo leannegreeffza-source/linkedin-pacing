@@ -747,6 +747,28 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
               </span>
             )}
             {lastRefresh && <span className="text-xs text-slate-500">Updated {lastRefresh.toLocaleTimeString()}</span>}
+
+            {/* Export buttons in ribbon — only visible when data is loaded */}
+            {selectedAccounts.length > 0 && (
+              <div className="flex items-center gap-2 border-l border-slate-600 pl-3">
+                <button
+                  onClick={() => exportToExcel(clientRows, pacingData?.dailyData || [], startDate, endDate, totalSpend, budgetUSD)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium transition-colors">
+                  <FileSpreadsheet className="w-4 h-4" /> Excel
+                </button>
+                <button
+                  onClick={() => exportToPDF(clientRows, pacingData?.dailyData || [], startDate, endDate, totalSpend, budgetUSD, pacingStatus.label)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition-colors">
+                  <FileText className="w-4 h-4" /> PDF
+                </button>
+                <button
+                  onClick={generateAIReport}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-purple-700 hover:bg-purple-600 text-white rounded-lg text-sm font-medium transition-colors">
+                  <Sparkles className="w-4 h-4" /> AI Report
+                </button>
+              </div>
+            )}
+
             <button onClick={loadPacing} disabled={loading || selectedAccounts.length === 0}
               className="flex items-center gap-2 px-3 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 text-sm disabled:opacity-40 transition-colors">
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -1111,32 +1133,13 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                 )}
               </div>
 
-              {/* ── Change 3: Client Breakdown — Ranked ── */}
+              {/* Client Breakdown — Ranked */}
               <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-                <div className="flex items-center justify-between mb-4">
+                <div className="mb-4">
                   <h3 className="text-sm font-bold text-white uppercase tracking-wide flex items-center gap-2">
                     <Users className="w-4 h-4" /> Client Breakdown
                     <span className="text-slate-500 text-xs font-normal normal-case">{activeAccountCount} clients · ranked by spend</span>
                   </h3>
-
-                  {/* ── Change 4: Export Buttons ── */}
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => exportToExcel(clientRows, pacingData?.dailyData || [], startDate, endDate, totalSpend, budgetUSD)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-medium transition-colors">
-                      <FileSpreadsheet className="w-3.5 h-3.5" /> Excel
-                    </button>
-                    <button
-                      onClick={() => exportToPDF(clientRows, pacingData?.dailyData || [], startDate, endDate, totalSpend, budgetUSD, pacingStatus.label)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white rounded-lg text-xs font-medium transition-colors">
-                      <FileText className="w-3.5 h-3.5" /> PDF
-                    </button>
-                    <button
-                      onClick={generateAIReport}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-700 hover:bg-purple-600 text-white rounded-lg text-xs font-medium transition-colors">
-                      <Sparkles className="w-3.5 h-3.5" /> AI Report
-                    </button>
-                  </div>
                 </div>
 
                 {clientRows.length === 0 ? (

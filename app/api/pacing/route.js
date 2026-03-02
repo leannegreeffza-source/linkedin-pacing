@@ -1,50 +1,154 @@
 import { getToken } from 'next-auth/jwt';
 import { NextResponse } from 'next/server';
-import { promises as fs } from 'fs';
-import path from 'path';
-
-// Simple file-based storage — replace with your DB (e.g. Prisma, Supabase, MongoDB) as needed
-const DATA_DIR = path.join(process.cwd(), '.data');
-
-async function getUserFilePath(userId) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  return path.join(DATA_DIR, `exclusions_${userId}.json`);
-}
 
 export const dynamic = 'force-dynamic';
-
-export async function GET(request) {
-  try {
-    const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
-    if (!token?.sub) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
-
-    const filePath = await getUserFilePath(token.sub);
-    try {
-      const raw = await fs.readFile(filePath, 'utf-8');
-      return NextResponse.json(JSON.parse(raw));
-    } catch {
-      // No exclusions saved yet
-      return NextResponse.json({ excludedAccountIds: [] });
-    }
-  } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-}
 
 export async function POST(request) {
   try {
     const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
-    if (!token?.sub) {
+    if (!token?.accessToken) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    const body = await request.json();
-    const filePath = await getUserFilePath(token.sub);
-    await fs.writeFile(filePath, JSON.stringify(body, null, 2), 'utf-8');
-    return NextResponse.json({ ok: true });
+    const { accountIds, campaignGroupIds, campaignIds, startDate, endDate } = await request.json();
+    if (!accountIds || accountIds.length === 0) {
+      return NextResponse.json({ error: 'No accounts provided' }, { status: 400 });
+    }
+
+    const now = new Date();
+
+    // Parse dates
+    const start = startDate ? new Date(startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = endDate ? new Date(endDate) : now;
+
+    // Clamp end to today
+    const clampedEnd = end > now ? now : end;
+
+    const accountResults = await Promise.all(
+      accountIds.map(async (accountId) => {
+        try {
+          const params = new URLSearchParams({
+            q: 'analytics',
+            pivot: 'ACCOUNT',
+            timeGranularity: 'DAILY',
+            'dateRange.start.year': start.getFullYear(),
+            'dateRange.start.month': start.getMonth() + 1,
+            'dateRange.start.day': start.getDate(),
+            'dateRange.end.year': clampedEnd.getFullYear(),
+            'dateRange.end.month': clampedEnd.getMonth() + 1,
+            'dateRange.end.day': clampedEnd.getDate(),
+            'accounts[0]': `urn:li:sponsoredAccount:${accountId}`,
+            fields: 'dateRange,costInLocalCurrency,impressions,clicks,totalEngagements,oneClickLeads',
+          });
+
+          if (campaignIds && campaignIds.length > 0) {
+            campaignIds.forEach((cId, idx) => {
+              params.append(`campaigns[${idx}]`, `urn:li:sponsoredCampaign:${cId}`);
+            });
+          } else if (campaignGroupIds && campaignGroupIds.length > 0) {
+            campaignGroupIds.forEach((gId, idx) => {
+              params.append(`campaignGroups[${idx}]`, `urn:li:sponsoredCampaignGroup:${gId}`);
+            });
+          }
+
+          const res = await fetch(
+            `https://api.linkedin.com/v2/adAnalyticsV2?${params.toString()}`,
+            {
+              headers: {
+                Authorization: `Bearer ${token.accessToken}`,
+                'LinkedIn-Version': '202401',
+              },
+            }
+          );
+
+          if (!res.ok) {
+            console.error(`Failed for account ${accountId}:`, await res.text());
+            return { accountId, dailyData: [], error: true };
+          }
+
+          const data = await res.json();
+          const dailyData = (data.elements || []).map(el => {
+            const dr = el.dateRange?.start || el.dateRange;
+            return {
+              date: `${dr.year}-${String(dr.month).padStart(2, '0')}-${String(dr.day).padStart(2, '0')}`,
+              day: dr.day,
+              month: dr.month,
+              year: dr.year,
+              spend: parseFloat(el.costInLocalCurrency || 0),
+              impressions: parseInt(el.impressions || 0),
+              clicks: parseInt(el.clicks || 0),
+              leads: parseInt(el.oneClickLeads || 0),
+            };
+          }).sort((a, b) => a.date.localeCompare(b.date));
+
+          return { accountId, dailyData };
+        } catch (err) {
+          console.error(`Error for account ${accountId}:`, err);
+          return { accountId, dailyData: [], error: true };
+        }
+      })
+    );
+
+    const dateMap = {};
+    for (const result of accountResults) {
+      for (const day of result.dailyData) {
+        if (!dateMap[day.date]) {
+          dateMap[day.date] = { date: day.date, day: day.day, month: day.month, year: day.year, spend: 0, impressions: 0, clicks: 0, leads: 0 };
+        }
+        dateMap[day.date].spend += day.spend;
+        dateMap[day.date].impressions += day.impressions;
+        dateMap[day.date].clicks += day.clicks;
+        dateMap[day.date].leads += day.leads;
+      }
+    }
+
+    const mergedDailyData = Object.values(dateMap).sort((a, b) => a.date.localeCompare(b.date));
+
+    const todayStr = now.toISOString().split('T')[0];
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+    const totalSpend = mergedDailyData.reduce((s, d) => s + d.spend, 0);
+    const todaySpend = dateMap[todayStr]?.spend || 0;
+    const yesterdaySpend = dateMap[yesterdayStr]?.spend || 0;
+
+    // Calculate days based on calendar dates to avoid timezone/DST issues
+    const msPerDay = 1000 * 60 * 60 * 24;
+    const startMidnight = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    const endMidnight = new Date(clampedEnd.getFullYear(), clampedEnd.getMonth(), clampedEnd.getDate());
+    const nowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const totalDays = Math.max(1, Math.round((endMidnight - startMidnight) / msPerDay) + 1);
+    // daysElapsed = days from start up to and including today (capped at totalDays)
+    const daysElapsed = Math.max(1, Math.min(totalDays, Math.round((nowMidnight - startMidnight) / msPerDay) + 1));
+
+    const accountTotals = accountResults.map(r => {
+      return {
+        accountId: r.accountId,
+        totalSpend: r.dailyData.reduce((s, d) => s + d.spend, 0),
+        todaySpend: r.dailyData.find(d => d.date === todayStr)?.spend || 0,
+        yesterdaySpend: r.dailyData.find(d => d.date === yesterdayStr)?.spend || 0,
+        error: r.error || false,
+      };
+    });
+
+    return NextResponse.json({
+      dailyData: mergedDailyData,
+      accountTotals,
+      summary: {
+        totalSpend, todaySpend, yesterdaySpend,
+        totalDays, daysElapsed,
+        startDate: start.toISOString().split('T')[0],
+        endDate: clampedEnd.toISOString().split('T')[0],
+        currentDay: now.getDate(),
+        daysInMonth: new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(),
+        targetMonth: now.getMonth() + 1,
+        targetYear: now.getFullYear(),
+        lastDay: now.getDate(),
+      },
+    });
   } catch (error) {
+    console.error('Pacing API error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
