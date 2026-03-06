@@ -1306,11 +1306,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
       {/* ── BOD Tab ── */}
       {activeTab === 'bod' && (
         <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
-          <BODTab
-            accounts={accounts}
-            startDate={startDate}
-            endDate={endDate}
-          />
+          <BODTab />
         </div>
       )}
 

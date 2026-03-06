@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { RefreshCw, FileSpreadsheet, Eye, EyeOff, Search, X, Upload, ChevronDown } from 'lucide-react';
+import { useSession } from 'next-auth/react';
+import { RefreshCw, FileSpreadsheet, Eye, EyeOff, Search, X, Upload, ChevronDown, Calendar } from 'lucide-react';
 
 // ─── Column definitions (exact order from 202602 BOD with PMF) ───────────────
-// source: 'blue' = LinkedIn API (FF00B0F0 fill), 'black' = Reference Sheet
 const COLS = [
   { key: 'accountId',         label: 'Account ID',          source: 'blue',  w: 115 },
   { key: 'campaignGroupId',   label: 'Campaign Group ID',   source: 'blue',  w: 140 },
@@ -37,25 +37,30 @@ const COLS = [
   { key: 'specialNotes',      label: 'Special Notes',       source: 'black', w: 200 },
 ];
 
-const BLUE_HDR = '#00B0F0';
+const BLUE_HDR  = '#00B0F0';
 const BLACK_HDR = '#595959';
-const BLUE_CELL = '#e6f7ff';
-const WHITE_CELL = '#ffffff';
+const TOTAL_KEYS = new Set(['localSpend','mediaSpendUSD','pmfUSD','mediaSpendZAR','pmfZAR','grossZAR']);
 
-// ─── Formatters ───────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function toYMD(d) { return d.toISOString().split('T')[0]; }
+function todayStr()      { return toYMD(new Date()); }
+function firstOfMonth()  { const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth(), 1)); }
+function lastNDays(n)    { const d = new Date(); d.setDate(d.getDate() - n + 1); return toYMD(d); }
+function lastMonthStart(){ const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth()-1, 1)); }
+function lastMonthEnd()  { const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth(), 0)); }
+
 function fmtCell(val, fmt) {
   if (val == null || val === '') return '';
   if (fmt === 'num2') return Number(val).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (fmt === 'pct') return `${(Number(val) * 100).toFixed(2)}%`;
+  if (fmt === 'pct')  return `${(Number(val) * 100).toFixed(2)}%`;
   return String(val);
 }
 
-// ─── Computed columns (derived from base fields) ──────────────────────────────
 function computeRow(r, exchangeRate) {
-  const pmfUSD       = (r.mediaSpendUSD || 0) * (r.pmfPercentage || 0);
+  const pmfUSD        = (r.mediaSpendUSD || 0) * (r.pmfPercentage || 0);
   const mediaSpendZAR = (r.mediaSpendUSD || 0) * exchangeRate;
-  const pmfZAR       = pmfUSD * exchangeRate;
-  const grossZAR     = mediaSpendZAR + pmfZAR;
+  const pmfZAR        = pmfUSD * exchangeRate;
+  const grossZAR      = mediaSpendZAR + pmfZAR;
   return {
     ...r,
     partner:       'LinkedIn',
@@ -71,21 +76,12 @@ function computeRow(r, exchangeRate) {
   };
 }
 
-// ─── LocalStorage helpers ─────────────────────────────────────────────────────
-const LS_REF   = 'bod_ref_data_v1';
-const LS_EXCL  = 'bod_excluded_ids';
-const LS_RATE  = 'bod_exchange_rate';
+// ─── LocalStorage ─────────────────────────────────────────────────────────────
+function lsGet(k, fb) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch { return fb; } }
+function lsSet(k, v)  { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 
-function lsGet(key, fallback) {
-  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
-  catch { return fallback; }
-}
-function lsSet(key, val) {
-  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
-}
-
-// ─── Excel export (SheetJS) ───────────────────────────────────────────────────
-async function exportToExcel(computedRows, startDate, endDate) {
+// ─── Excel export ─────────────────────────────────────────────────────────────
+async function exportToExcel(rows, startDate, endDate) {
   if (!window.XLSX) {
     await new Promise((res, rej) => {
       const s = document.createElement('script');
@@ -95,12 +91,8 @@ async function exportToExcel(computedRows, startDate, endDate) {
     });
   }
   const XLSX = window.XLSX;
-
-  // Header row
   const wsData = [COLS.map(c => c.label)];
-
-  // Data rows — exact column order, exact types
-  computedRows.forEach(row => {
+  rows.forEach(row => {
     wsData.push(COLS.map(col => {
       const v = row[col.key];
       if (v == null) return '';
@@ -109,13 +101,8 @@ async function exportToExcel(computedRows, startDate, endDate) {
       return v;
     }));
   });
-
   const ws = XLSX.utils.aoa_to_sheet(wsData);
-
-  // Column widths
   ws['!cols'] = COLS.map(c => ({ wch: Math.round(c.w / 6.5) }));
-
-  // Number/pct formats on data cells
   const range = XLSX.utils.decode_range(ws['!ref']);
   for (let R = 1; R <= range.e.r; R++) {
     COLS.forEach((col, C) => {
@@ -125,28 +112,19 @@ async function exportToExcel(computedRows, startDate, endDate) {
       if (col.fmt === 'pct')  ws[addr].z = '0.00%';
     });
   }
-
-  // Header styles (requires xlsx-style or write-excel-file; we use basic approach)
-  // SheetJS community doesn't support full cell styling so we set fill via s property
-  // which is partially supported in write with bookType xlsx
   COLS.forEach((col, C) => {
     const addr = XLSX.utils.encode_cell({ r: 0, c: C });
     if (!ws[addr]) return;
     ws[addr].s = {
       font: { bold: true, color: { rgb: 'FFFFFF' } },
       fill: { patternType: 'solid', fgColor: { rgb: col.source === 'blue' ? '00B0F0' : '595959' } },
-      alignment: { horizontal: 'center', wrapText: false },
-      border: {
-        bottom: { style: 'thin', color: { rgb: '000000' } },
-        right:  { style: 'thin', color: { rgb: '000000' } },
-      },
+      alignment: { horizontal: 'center' },
     };
   });
-
   const monthStr = startDate ? startDate.slice(0, 7).replace('-', '') : 'BOD';
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, `${monthStr} BOD with PMF`);
-  XLSX.writeFile(wb, `${monthStr}_BOD_with_PMF.xlsx`);
+  XLSX.writeFile(wb, `${monthStr}_BOD_with_PMF_${startDate}_${endDate}.xlsx`);
 }
 
 // ─── Parse uploaded reference Excel ──────────────────────────────────────────
@@ -164,15 +142,10 @@ async function parseRefExcel(file) {
     reader.onload = e => {
       try {
         const wb = window.XLSX.read(e.target.result, { type: 'array', cellDates: true });
-        // Find the reference sheet
-        const sheetName =
-          wb.SheetNames.find(n => n.includes('Reference') || n.includes('Ref')) ||
-          wb.SheetNames[0];
+        const sheetName = wb.SheetNames.find(n => n.toLowerCase().includes('ref')) || wb.SheetNames[0];
         const ws = wb.Sheets[sheetName];
         const rows = window.XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
-
-        const map = {};   // keyed by "accountId_groupId"
-        const byAcc = {}; // fallback keyed by accountId only
+        const byAccGrp = {}, byAcc = {};
         for (let i = 1; i < rows.length; i++) {
           const r = rows[i];
           const acc = r[0] ? String(r[0]).trim() : '';
@@ -191,22 +164,20 @@ async function parseRefExcel(file) {
             pmfPercentage: r[15] ? parseFloat(r[15]) || 0 : 0,
             specialNotes:  r[17] ? String(r[17]).trim() : '',
           };
-          const key = `${acc}_${grp}`;
-          if (!map[key]) map[key] = entry;
+          if (!byAccGrp[`${acc}_${grp}`]) byAccGrp[`${acc}_${grp}`] = entry;
           if (!byAcc[acc]) byAcc[acc] = entry;
         }
-        resolve({ byAccGrp: map, byAcc });
+        resolve({ byAccGrp, byAcc });
       } catch (err) { reject(err); }
     };
     reader.readAsArrayBuffer(file);
   });
 }
 
-// ─── Apply ref data to raw LinkedIn rows ──────────────────────────────────────
 function applyRef(rawRows, ref) {
   return rawRows.map(r => {
     const key = `${r.accountId}_${r.campaignGroupId}`;
-    const d = ref.byAccGrp?.[key] || ref.byAcc?.[r.accountId] || {};
+    const d = ref.byAccGrp?.[key] || ref.byAcc?.[String(r.accountId)] || {};
     return {
       ...r,
       category:      d.category      || '',
@@ -216,50 +187,80 @@ function applyRef(rawRows, ref) {
       bookingAgency: d.bookingAgency || '',
       advertiser:    d.advertiser    || '',
       industry:      d.industry      || '',
-      io2:           d.io            || '',
       ciNumber:      d.poNumber      || '',
-      pmfPercentage: d.pmfPercentage || 0,
+      pmfPercentage: d.pmfPercentage != null ? d.pmfPercentage : 0,
       specialNotes:  d.specialNotes  || '',
     };
   });
 }
 
 // ─── Main BOD Tab ─────────────────────────────────────────────────────────────
-export default function BODTab({ accounts = [], startDate, endDate }) {
-  const [rows, setRows]             = useState([]);
-  const [loading, setLoading]       = useState(false);
-  const [error, setError]           = useState('');
-  const [ref, setRef]               = useState({ byAccGrp: {}, byAcc: {} });
-  const [refCount, setRefCount]     = useState(0);
-  const [excludedIds, setExcludedIds] = useState([]);
-  const [showAccMenu, setShowAccMenu] = useState(false);
-  const [exchangeRate, setExchangeRate] = useState(18);
-  const [editRate, setEditRate]     = useState(false);
-  const [rateInput, setRateInput]   = useState('18');
-  const [search, setSearch]         = useState('');
+export default function BODTab() {
+  const { data: session } = useSession();
+
+  // ── Own accounts state (fetched independently for this tab) ──
+  const [allAccounts, setAllAccounts]   = useState([]);
+  const [loadingAccs, setLoadingAccs]   = useState(false);
+  const [excludedIds, setExcludedIds]   = useState([]);
+  const [showAccMenu, setShowAccMenu]   = useState(false);
+
+  // ── Own date range state ──────────────────────────────────────
+  const [startDate, setStartDate] = useState(firstOfMonth);
+  const [endDate,   setEndDate]   = useState(todayStr);
+
+  // ── Data state ────────────────────────────────────────────────
+  const [rows, setRows]           = useState([]);
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState('');
   const [lastRefresh, setLastRefresh] = useState(null);
+
+  // ── Reference data ────────────────────────────────────────────
+  const [ref, setRef]             = useState({ byAccGrp: {}, byAcc: {} });
+  const [refCount, setRefCount]   = useState(0);
+
+  // ── Display state ─────────────────────────────────────────────
+  const [exchangeRate, setExchangeRate] = useState(18);
+  const [editRate, setEditRate]   = useState(false);
+  const [rateInput, setRateInput] = useState('18');
+  const [search, setSearch]       = useState('');
+
   const fileRef = useRef();
   const menuRef = useRef();
 
-  // Load persisted state
+  // ── Load persisted settings on mount ─────────────────────────
   useEffect(() => {
-    const savedRef = lsGet(LS_REF, null);
+    const savedRef = lsGet('bod_ref_data_v1', null);
     if (savedRef) { setRef(savedRef); setRefCount(Object.keys(savedRef.byAccGrp || {}).length); }
-    setExcludedIds(lsGet(LS_EXCL, []));
-    const savedRate = lsGet(LS_RATE, 18);
-    setExchangeRate(savedRate);
-    setRateInput(String(savedRate));
+    setExcludedIds(lsGet('bod_excluded_ids', []));
+    const r = lsGet('bod_exchange_rate', 18);
+    setExchangeRate(r); setRateInput(String(r));
   }, []);
 
-  // Close account menu on outside click
+  // ── Fetch ALL accounts for the signed-in user ─────────────────
   useEffect(() => {
-    function handler(e) { if (menuRef.current && !menuRef.current.contains(e.target)) setShowAccMenu(false); }
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    if (!session) return;
+    setLoadingAccs(true);
+    fetch('/api/accounts')
+      .then(r => r.json())
+      .then(data => {
+        setAllAccounts(Array.isArray(data) ? data : []);
+        setLoadingAccs(false);
+      })
+      .catch(() => setLoadingAccs(false));
+  }, [session]);
+
+  // ── Close account menu on outside click ──────────────────────
+  useEffect(() => {
+    function h(e) { if (menuRef.current && !menuRef.current.contains(e.target)) setShowAccMenu(false); }
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
   }, []);
 
+  // ── Fetch BOD data ────────────────────────────────────────────
   async function loadBOD() {
-    const activeIds = accounts.filter(a => !excludedIds.includes(a.id)).map(a => a.id);
+    const activeIds = allAccounts
+      .filter(a => !excludedIds.includes(a.id))
+      .map(a => a.id);
     if (activeIds.length === 0) { setRows([]); return; }
     setLoading(true); setError('');
     try {
@@ -270,51 +271,58 @@ export default function BODTab({ accounts = [], startDate, endDate }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'API error');
-      const withRef = applyRef(data.rows || [], ref);
-      setRows(withRef);
+      setRows(applyRef(data.rows || [], ref));
       setLastRefresh(new Date());
     } catch (e) { setError(e.message); }
     setLoading(false);
   }
 
-  // Auto-load when accounts/dates change
+  // Auto-load when accounts or dates change
   useEffect(() => {
-    if (accounts.length > 0) loadBOD();
-  }, [accounts, startDate, endDate]);
+    if (allAccounts.length > 0) loadBOD();
+  }, [allAccounts, startDate, endDate]);
 
+  // ── Account exclusion ─────────────────────────────────────────
   function toggleExclude(id) {
     setExcludedIds(prev => {
       const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
-      lsSet(LS_EXCL, next);
+      lsSet('bod_excluded_ids', next);
       return next;
     });
   }
 
+  // ── Reference sheet upload ────────────────────────────────────
   async function handleRefUpload(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
       const parsed = await parseRefExcel(file);
-      setRef(parsed);
-      setRefCount(Object.keys(parsed.byAccGrp || {}).length);
-      lsSet(LS_REF, parsed);
-      // Re-apply to current rows
+      setRef(parsed); setRefCount(Object.keys(parsed.byAccGrp || {}).length);
+      lsSet('bod_ref_data_v1', parsed);
       setRows(prev => applyRef(prev, parsed));
       alert(`✅ Reference data loaded: ${Object.keys(parsed.byAccGrp).length} entries`);
-    } catch (err) {
-      alert('❌ Failed to parse reference sheet: ' + err.message);
-    }
+    } catch (err) { alert('❌ ' + err.message); }
     e.target.value = '';
   }
 
+  // ── Exchange rate ─────────────────────────────────────────────
   function commitRate() {
     const r = parseFloat(rateInput);
-    if (!isNaN(r) && r > 0) { setExchangeRate(r); lsSet(LS_RATE, r); }
+    if (!isNaN(r) && r > 0) { setExchangeRate(r); lsSet('bod_exchange_rate', r); }
     setEditRate(false);
   }
 
-  // Filtered + computed rows
-  const activeRows = rows.filter(r => !excludedIds.includes(String(r.accountId)));
+  // ── Date quick selectors ──────────────────────────────────────
+  const quickDates = [
+    { label: 'This Month', fn: () => { setStartDate(firstOfMonth()); setEndDate(todayStr()); } },
+    { label: 'Last Month', fn: () => { setStartDate(lastMonthStart()); setEndDate(lastMonthEnd()); } },
+    { label: 'Last 7d',    fn: () => { setStartDate(lastNDays(7));  setEndDate(todayStr()); } },
+    { label: 'Last 30d',   fn: () => { setStartDate(lastNDays(30)); setEndDate(todayStr()); } },
+    { label: 'Today',      fn: () => { setStartDate(todayStr()); setEndDate(todayStr()); } },
+  ];
+
+  // ── Derived data ──────────────────────────────────────────────
+  const activeRows   = rows.filter(r => !excludedIds.includes(String(r.accountId)));
   const filteredRows = activeRows.filter(r => {
     if (!search) return true;
     const s = search.toLowerCase();
@@ -322,35 +330,27 @@ export default function BODTab({ accounts = [], startDate, endDate }) {
       .some(v => v && String(v).toLowerCase().includes(s));
   });
   const computedRows = filteredRows.map(r => computeRow(r, exchangeRate));
-
-  // Totals
   const totals = computedRows.reduce((t, r) => ({
-    localSpend:     t.localSpend     + (r.localSpend     || 0),
-    mediaSpendUSD:  t.mediaSpendUSD  + (r.mediaSpendUSD  || 0),
-    pmfUSD:         t.pmfUSD         + (r.pmfUSD         || 0),
-    mediaSpendZAR:  t.mediaSpendZAR  + (r.mediaSpendZAR  || 0),
-    pmfZAR:         t.pmfZAR         + (r.pmfZAR         || 0),
-    grossZAR:       t.grossZAR       + (r.grossZAR       || 0),
-  }), { localSpend: 0, mediaSpendUSD: 0, pmfUSD: 0, mediaSpendZAR: 0, pmfZAR: 0, grossZAR: 0 });
+    localSpend:    t.localSpend    + (r.localSpend    || 0),
+    mediaSpendUSD: t.mediaSpendUSD + (r.mediaSpendUSD || 0),
+    pmfUSD:        t.pmfUSD        + (r.pmfUSD        || 0),
+    mediaSpendZAR: t.mediaSpendZAR + (r.mediaSpendZAR || 0),
+    pmfZAR:        t.pmfZAR        + (r.pmfZAR        || 0),
+    grossZAR:      t.grossZAR      + (r.grossZAR      || 0),
+  }), { localSpend:0, mediaSpendUSD:0, pmfUSD:0, mediaSpendZAR:0, pmfZAR:0, grossZAR:0 });
 
-  const TOTAL_KEYS = new Set(['localSpend', 'mediaSpendUSD', 'pmfUSD', 'mediaSpendZAR', 'pmfZAR', 'grossZAR']);
+  const activeAccountCount  = allAccounts.filter(a => !excludedIds.includes(a.id)).length;
+  const excludedAccountCount = excludedIds.length;
 
+  // ── Render ────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full bg-slate-900">
 
-      {/* ── Toolbar ── */}
-      <div className="bg-slate-800 border-b border-slate-700 px-4 py-2.5 flex items-center gap-2 flex-wrap shrink-0">
-
-        {/* Title */}
-        <div className="flex items-center gap-2 mr-2">
-          <FileSpreadsheet className="w-4 h-4 text-blue-400" />
-          <span className="text-sm font-bold text-white">BOD Report</span>
-          <span className="text-xs text-slate-400 font-mono">{startDate} → {endDate}</span>
-          {lastRefresh && <span className="text-xs text-slate-500">· {lastRefresh.toLocaleTimeString()}</span>}
-        </div>
+      {/* ── TOP TOOLBAR ── */}
+      <div className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center gap-2 flex-wrap shrink-0">
 
         {/* Legend */}
-        <div className="flex items-center gap-3 mr-2">
+        <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
             <div className="w-3 h-3 rounded-sm" style={{ background: BLUE_HDR }} />
             <span className="text-xs text-slate-400">LinkedIn API</span>
@@ -359,6 +359,7 @@ export default function BODTab({ accounts = [], startDate, endDate }) {
             <div className="w-3 h-3 rounded-sm bg-slate-500" />
             <span className="text-xs text-slate-400">Reference Sheet</span>
           </div>
+          {lastRefresh && <span className="text-xs text-slate-500 ml-1">· Updated {lastRefresh.toLocaleTimeString()}</span>}
         </div>
 
         <div className="flex-1" />
@@ -366,11 +367,8 @@ export default function BODTab({ accounts = [], startDate, endDate }) {
         {/* Search */}
         <div className="relative">
           <Search className="absolute left-2.5 top-1.5 w-3.5 h-3.5 text-slate-400" />
-          <input
-            value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search…"
-            className="pl-8 pr-7 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 w-44"
-          />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
+            className="pl-8 pr-7 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 w-44" />
           {search && (
             <button onClick={() => setSearch('')} className="absolute right-2 top-1.5 text-slate-400 hover:text-white">
               <X className="w-3.5 h-3.5" />
@@ -382,13 +380,11 @@ export default function BODTab({ accounts = [], startDate, endDate }) {
         <div className="flex items-center gap-1.5 bg-slate-700 rounded-lg px-2.5 py-1.5 border border-slate-600">
           <span className="text-xs text-slate-400">USD/ZAR</span>
           {editRate ? (
-            <input
-              autoFocus value={rateInput}
+            <input autoFocus value={rateInput}
               onChange={e => setRateInput(e.target.value)}
               onBlur={commitRate}
-              onKeyDown={e => { if (e.key === 'Enter') commitRate(); if (e.key === 'Escape') setEditRate(false); }}
-              className="w-14 bg-slate-600 text-yellow-300 text-xs font-bold rounded px-1 py-0.5 focus:outline-none"
-            />
+              onKeyDown={e => { if (e.key==='Enter') commitRate(); if (e.key==='Escape') setEditRate(false); }}
+              className="w-14 bg-slate-600 text-yellow-300 text-xs font-bold rounded px-1 py-0.5 focus:outline-none" />
           ) : (
             <button onClick={() => { setRateInput(String(exchangeRate)); setEditRate(true); }}
               className="text-xs font-bold text-yellow-300 hover:text-yellow-200 min-w-[2rem]">
@@ -409,46 +405,55 @@ export default function BODTab({ accounts = [], startDate, endDate }) {
         <div className="relative" ref={menuRef}>
           <button onClick={() => setShowAccMenu(v => !v)}
             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs font-medium border border-slate-600 transition-colors">
-            <Eye className="w-3.5 h-3.5" />
-            Accounts
-            {excludedIds.length > 0 && (
-              <span className="bg-red-600 text-white text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center">
-                {excludedIds.length}
-              </span>
+            {loadingAccs
+              ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              : <Eye className="w-3.5 h-3.5" />
+            }
+            <span>
+              {loadingAccs ? 'Loading…' : `${activeAccountCount} Account${activeAccountCount !== 1 ? 's' : ''}`}
+            </span>
+            {excludedAccountCount > 0 && (
+              <span className="bg-red-600 text-white text-xs font-bold rounded-full px-1.5">{excludedAccountCount} hidden</span>
             )}
             <ChevronDown className="w-3 h-3 text-slate-400" />
           </button>
 
           {showAccMenu && (
-            <div className="absolute right-0 top-9 z-30 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-72 p-3">
+            <div className="absolute right-0 top-9 z-30 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-80 p-3">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 px-1">
-                Include / Exclude Accounts
+                Include / Exclude Accounts ({allAccounts.length} total)
               </p>
-              <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
-                {accounts.map(a => {
-                  const excl = excludedIds.includes(a.id);
-                  return (
-                    <div key={a.id}
-                      className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors ${
-                        excl ? 'bg-red-900/30 border border-red-800/50' : 'bg-slate-700 hover:bg-slate-600'
-                      }`}
-                      onClick={() => toggleExclude(a.id)}>
-                      {excl
-                        ? <EyeOff className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                        : <Eye    className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      }
-                      <span className={`text-xs flex-1 truncate ${excl ? 'text-red-300 line-through' : 'text-white'}`}>
-                        {a.name}
-                      </span>
-                      <span className="text-xs text-slate-500 font-mono">{a.id}</span>
-                    </div>
-                  );
-                })}
+              {allAccounts.length === 0 ? (
+                <p className="text-xs text-slate-500 py-3 text-center">No accounts found</p>
+              ) : (
+                <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
+                  {allAccounts.map(a => {
+                    const excl = excludedIds.includes(a.id);
+                    return (
+                      <div key={a.id}
+                        className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors ${excl ? 'bg-red-900/30 border border-red-800/50' : 'bg-slate-700 hover:bg-slate-600'}`}
+                        onClick={() => toggleExclude(a.id)}>
+                        {excl
+                          ? <EyeOff className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                          : <Eye    className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        }
+                        <span className={`text-xs flex-1 truncate ${excl ? 'text-red-300 line-through' : 'text-white'}`}>{a.name}</span>
+                        <span className="text-xs text-slate-500 font-mono shrink-0">{a.id}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="flex gap-2 mt-2.5">
+                <button onClick={() => { setExcludedIds([]); lsSet('bod_excluded_ids',[]); }}
+                  className="flex-1 py-1.5 bg-slate-600 hover:bg-slate-500 text-slate-200 text-xs rounded-lg">
+                  Include All
+                </button>
+                <button onClick={() => { setShowAccMenu(false); loadBOD(); }}
+                  className="flex-1 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg">
+                  Apply & Reload
+                </button>
               </div>
-              <button onClick={() => { setShowAccMenu(false); loadBOD(); }}
-                className="w-full mt-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-colors">
-                Apply & Reload
-              </button>
             </div>
           )}
         </div>
@@ -460,49 +465,77 @@ export default function BODTab({ accounts = [], startDate, endDate }) {
           Refresh
         </button>
 
-        {/* Export Excel */}
-        <button
-          disabled={computedRows.length === 0}
+        {/* Export */}
+        <button disabled={computedRows.length === 0}
           onClick={() => exportToExcel(computedRows, startDate, endDate)}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold disabled:opacity-40 transition-colors">
-          <FileSpreadsheet className="w-3.5 h-3.5" />
-          Export Excel
+          <FileSpreadsheet className="w-3.5 h-3.5" /> Export Excel
         </button>
       </div>
 
-      {/* ── Summary bar ── */}
+      {/* ── DATE RANGE BAR ── */}
+      <div className="bg-slate-800/60 border-b border-slate-700 px-4 py-2 flex items-center gap-3 flex-wrap shrink-0">
+        <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-slate-400">From</label>
+          <input type="date" value={startDate} max={endDate}
+            onChange={e => setStartDate(e.target.value)}
+            className="px-2 py-1 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-slate-400">To</label>
+          <input type="date" value={endDate} min={startDate} max={todayStr()}
+            onChange={e => setEndDate(e.target.value)}
+            className="px-2 py-1 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
+        </div>
+        <div className="flex items-center gap-1.5">
+          {quickDates.map(q => (
+            <button key={q.label} onClick={q.fn}
+              className="px-2.5 py-1 bg-slate-700 hover:bg-blue-700 text-slate-300 hover:text-white text-xs rounded-lg border border-slate-600 transition-colors">
+              {q.label}
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-slate-500 ml-auto">
+          {startDate === endDate ? startDate : `${startDate} → ${endDate}`}
+          {' · '}{computedRows.length} rows
+        </span>
+      </div>
+
+      {/* ── SUMMARY BAR ── */}
       {computedRows.length > 0 && (
-        <div className="bg-slate-900 border-b border-slate-700 px-4 py-2 flex items-center gap-5 text-xs flex-wrap shrink-0">
-          <span className="text-slate-500 font-mono">{computedRows.length} rows</span>
-          <span className="text-slate-500">Local Spend: <span className="text-white font-bold">{fmtCell(totals.localSpend, 'num2')}</span></span>
-          <span className="text-slate-500">Media USD: <span className="text-sky-300 font-bold">${fmtCell(totals.mediaSpendUSD, 'num2')}</span></span>
-          <span className="text-slate-500">PMF USD: <span className="text-white font-mono">${fmtCell(totals.pmfUSD, 'num2')}</span></span>
-          <span className="text-slate-500">Media ZAR: <span className="text-yellow-300 font-bold">R{fmtCell(totals.mediaSpendZAR, 'num2')}</span></span>
-          <span className="text-slate-500">PMF ZAR: <span className="text-white font-mono">R{fmtCell(totals.pmfZAR, 'num2')}</span></span>
-          <span className="text-slate-500">Gross ZAR: <span className="text-emerald-400 font-bold">R{fmtCell(totals.grossZAR, 'num2')}</span></span>
+        <div className="bg-slate-900 border-b border-slate-700 px-4 py-1.5 flex items-center gap-5 text-xs flex-wrap shrink-0">
+          <span className="text-slate-500">Local Spend: <span className="text-white font-bold">{fmtCell(totals.localSpend,'num2')}</span></span>
+          <span className="text-slate-500">Media USD: <span className="text-sky-300 font-bold">${fmtCell(totals.mediaSpendUSD,'num2')}</span></span>
+          <span className="text-slate-500">PMF USD: <span className="text-white font-mono">${fmtCell(totals.pmfUSD,'num2')}</span></span>
+          <span className="text-slate-500">Media ZAR: <span className="text-yellow-300 font-bold">R{fmtCell(totals.mediaSpendZAR,'num2')}</span></span>
+          <span className="text-slate-500">PMF ZAR: <span className="text-white font-mono">R{fmtCell(totals.pmfZAR,'num2')}</span></span>
+          <span className="text-slate-500">Gross ZAR: <span className="text-emerald-400 font-bold">R{fmtCell(totals.grossZAR,'num2')}</span></span>
         </div>
       )}
 
-      {/* ── Table ── */}
+      {/* ── TABLE ── */}
       <div className="flex-1 overflow-auto">
         {loading ? (
           <div className="flex flex-col items-center justify-center h-64 gap-3">
             <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
             <p className="text-slate-400 text-sm">Loading BOD data from LinkedIn…</p>
-            <p className="text-slate-500 text-xs">Fetching campaign groups for {accounts.filter(a => !excludedIds.includes(a.id)).length} account(s)</p>
+            <p className="text-slate-500 text-xs">
+              Fetching campaigns for {activeAccountCount} account{activeAccountCount !== 1 ? 's' : ''}
+            </p>
           </div>
         ) : error ? (
           <div className="flex items-center justify-center h-64">
-            <p className="text-red-400 text-sm">Error: {error}</p>
+            <p className="text-red-400 text-sm bg-red-900/20 px-4 py-2 rounded-lg">❌ {error}</p>
           </div>
         ) : computedRows.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-500">
             <FileSpreadsheet className="w-12 h-12 opacity-20" />
-            <p className="text-sm">No data for this period</p>
-            <p className="text-xs">
+            <p className="text-sm">No spend data for this period</p>
+            <p className="text-xs text-center max-w-sm">
               {refCount === 0
-                ? 'Upload the Reference Sheet to populate black-field columns, then click Refresh'
-                : 'Select accounts and date range, then click Refresh'}
+                ? 'Upload the Reference Sheet (the Excel file you shared) to populate Agency, Advertiser, IO and other fields — then click Refresh.'
+                : 'Select a date range and click Refresh to load campaign data.'}
             </p>
           </div>
         ) : (
@@ -510,24 +543,19 @@ export default function BODTab({ accounts = [], startDate, endDate }) {
             <thead>
               <tr>
                 {COLS.map(col => (
-                  <th
-                    key={col.key}
-                    style={{
-                      minWidth: col.w,
-                      background: col.source === 'blue' ? BLUE_HDR : BLACK_HDR,
-                      color: '#ffffff',
-                      position: 'sticky',
-                      top: 0,
-                      zIndex: 10,
-                      whiteSpace: 'nowrap',
-                      padding: '6px 8px',
-                      textAlign: 'left',
-                      fontWeight: 700,
-                      borderRight: '1px solid rgba(255,255,255,0.15)',
-                      borderBottom: '2px solid rgba(0,0,0,0.3)',
-                      fontSize: 11,
-                    }}
-                  >
+                  <th key={col.key} style={{
+                    minWidth: col.w,
+                    background: col.source === 'blue' ? BLUE_HDR : BLACK_HDR,
+                    color: '#fff',
+                    position: 'sticky', top: 0, zIndex: 10,
+                    whiteSpace: 'nowrap',
+                    padding: '6px 8px',
+                    textAlign: 'left',
+                    fontWeight: 700,
+                    borderRight: '1px solid rgba(255,255,255,0.15)',
+                    borderBottom: '2px solid rgba(0,0,0,0.3)',
+                    fontSize: 11,
+                  }}>
                     {col.label}
                   </th>
                 ))}
@@ -535,31 +563,23 @@ export default function BODTab({ accounts = [], startDate, endDate }) {
             </thead>
             <tbody>
               {computedRows.map((row, i) => (
-                <tr
-                  key={`${row.accountId}-${row.campaignGroupId}-${row.campaignName}-${i}`}
+                <tr key={`${row.accountId}-${row.campaignGroupId}-${row.campaignName}-${i}`}
                   style={{ background: i % 2 === 0 ? '#1e293b' : '#172033' }}
-                  className="hover:brightness-110 transition-all"
-                >
+                  className="hover:brightness-110">
                   {COLS.map(col => {
                     const val = row[col.key];
-                    const isBlue = col.source === 'blue';
                     return (
-                      <td
-                        key={col.key}
-                        style={{
-                          minWidth: col.w,
-                          maxWidth: col.w + 60,
-                          padding: '4px 8px',
-                          borderRight: '1px solid rgba(100,116,139,0.2)',
-                          borderBottom: '1px solid rgba(100,116,139,0.15)',
-                          color: isBlue ? '#7dd3fc' : '#e2e8f0',
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          fontFamily: col.fmt ? 'monospace' : 'inherit',
-                        }}
-                        title={val != null ? String(val) : ''}
-                      >
+                      <td key={col.key} style={{
+                        minWidth: col.w, maxWidth: col.w + 80,
+                        padding: '4px 8px',
+                        borderRight: '1px solid rgba(100,116,139,0.2)',
+                        borderBottom: '1px solid rgba(100,116,139,0.15)',
+                        color: col.source === 'blue' ? '#7dd3fc' : '#e2e8f0',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        fontFamily: col.fmt ? 'monospace' : 'inherit',
+                      }} title={val != null ? String(val) : ''}>
                         {fmtCell(val, col.fmt)}
                       </td>
                     );
@@ -567,31 +587,18 @@ export default function BODTab({ accounts = [], startDate, endDate }) {
                 </tr>
               ))}
             </tbody>
-            {/* Totals footer */}
             <tfoot>
               <tr style={{ background: '#0f172a', borderTop: '2px solid #475569' }}>
                 {COLS.map((col, i) => (
-                  <td
-                    key={col.key}
-                    style={{
-                      minWidth: col.w,
-                      padding: '5px 8px',
-                      borderRight: '1px solid rgba(100,116,139,0.3)',
-                      color: TOTAL_KEYS.has(col.key) ? '#34d399' : '#94a3b8',
-                      fontWeight: TOTAL_KEYS.has(col.key) ? 700 : 400,
-                      fontFamily: 'monospace',
-                      whiteSpace: 'nowrap',
-                      position: 'sticky',
-                      bottom: 0,
-                      zIndex: 5,
-                      background: '#0f172a',
-                    }}
-                  >
-                    {i === 0
-                      ? `TOTAL (${computedRows.length})`
-                      : TOTAL_KEYS.has(col.key)
-                        ? fmtCell(totals[col.key], 'num2')
-                        : ''}
+                  <td key={col.key} style={{
+                    minWidth: col.w, padding: '5px 8px',
+                    borderRight: '1px solid rgba(100,116,139,0.3)',
+                    color: TOTAL_KEYS.has(col.key) ? '#34d399' : '#94a3b8',
+                    fontWeight: TOTAL_KEYS.has(col.key) ? 700 : 400,
+                    fontFamily: 'monospace', whiteSpace: 'nowrap',
+                    position: 'sticky', bottom: 0, zIndex: 5, background: '#0f172a',
+                  }}>
+                    {i === 0 ? `TOTAL (${computedRows.length})` : TOTAL_KEYS.has(col.key) ? fmtCell(totals[col.key], 'num2') : ''}
                   </td>
                 ))}
               </tr>
