@@ -341,6 +341,7 @@ export default function BODTab() {
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState('');
   const [lastRefresh, setLastRefresh] = useState(null);
+  const [progress, setProgress]   = useState({ phase: 0, pct: 0, message: '', spendingCount: 0, totalCount: 0, rowsSoFar: 0 });
   const [exchangeRate, setExchangeRate] = useState(18);
   const [editRate, setEditRate]   = useState(false);
   const [rateInput, setRateInput] = useState('18');
@@ -379,63 +380,98 @@ export default function BODTab() {
     return () => document.removeEventListener('mousedown', h);
   }, []);
 
-  // ── Fetch spend from LinkedIn API ─────────────────────────────────
+  // ── Fetch spend from LinkedIn API (streaming NDJSON) ───────────────────────
   async function loadBOD() {
     setLoading(true); setError('');
+    setProgress({ phase: 1, pct: 0, message: 'Starting…', spendingCount: 0, totalCount: 0, rowsSoFar: 0 });
     try {
-      if (mode === 'list' && bodList) {
-        // ── BOD List mode: fetch spend for the exact account IDs in the file ──
-        const uniqueAccIds = bodList.accountIds;
-        if (!uniqueAccIds.length) { setRows([]); setLoading(false); return; }
+      const accountIdsToFetch = mode === 'list' && bodList
+        ? bodList.accountIds
+        : allAccounts.filter(a => !excludedIds.includes(a.id)).map(a => String(a.id));
 
-        const res = await fetch('/api/bod', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accountIds: uniqueAccIds, startDate, endDate }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'API error');
+      if (!accountIdsToFetch.length) { setRows([]); setLoading(false); return; }
 
-        // Build spend lookup: "accountId_campaignGroupId" → spend
-        // and "accountId_campaignName" as fallback
-        const spendByAccGrp  = {};
-        const spendByAccCamp = {};
-        (data.rows || []).forEach(r => {
-          const keyAG = `${r.accountId}_${r.campaignGroupId}`;
-          spendByAccGrp[keyAG]  = (spendByAccGrp[keyAG]  || 0) + (r.localSpend || 0);
+      const res = await fetch('/api/bod', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountIds: accountIdsToFetch, startDate, endDate }),
+      });
 
-          const keyAC = `${r.accountId}_${(r.campaignName || '').toLowerCase()}`;
-          spendByAccCamp[keyAC] = (spendByAccCamp[keyAC] || 0) + (r.localSpend || 0);
-        });
-
-        // Merge spend into BOD list rows
-        const merged = bodList.rows.map(r => {
-          const keyAG = `${r.accountId}_${r.campaignGroupId}`;
-          const keyAC = `${r.accountId}_${(r.campaignName || '').toLowerCase()}`;
-          const spend  = spendByAccGrp[keyAG] || spendByAccCamp[keyAC] || 0;
-          // Use exchange rate from the uploaded file if present, else current setting
-          const fx = r.fileExchangeRate || exchangeRate;
-          return { ...r, localSpend: spend, mediaSpendUSD: spend, exchangeRate: fx };
-        });
-
-        setRows(merged);
-        setLastRefresh(new Date());
-
-      } else {
-        // ── All Accounts mode ──────────────────────────────────────────────────
-        const activeIds = allAccounts.filter(a => !excludedIds.includes(a.id)).map(a => a.id);
-        if (!activeIds.length) { setRows([]); setLoading(false); return; }
-
-        const res = await fetch('/api/bod', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accountIds: activeIds, startDate, endDate }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'API error');
-        setRows(applyRef(data.rows || [], ref));
-        setLastRefresh(new Date());
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(err.error || `HTTP ${res.status}`);
       }
+
+      // Read NDJSON stream
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let finalRows = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.error) throw new Error(msg.error);
+
+            if (msg.phase === 1) {
+              setProgress(p => ({
+                ...p, phase: 1,
+                message: msg.done
+                  ? `✓ Found ${msg.spendingCount} accounts with spend (of ${msg.totalCount} total)`
+                  : 'Phase 1: Scanning for accounts with spend…',
+                spendingCount: msg.spendingCount ?? p.spendingCount,
+                totalCount:    msg.totalCount    ?? p.totalCount,
+                pct: msg.done ? 50 : 15,
+              }));
+            }
+            if (msg.phase === 2) {
+              setProgress(p => ({
+                ...p, phase: 2,
+                message: `Phase 2: Fetching campaigns (${msg.processed}/${msg.total} accounts, ${msg.rowsSoFar} rows so far…)`,
+                pct: 50 + Math.round((msg.progress || 0) / 2),
+                rowsSoFar: msg.rowsSoFar ?? p.rowsSoFar,
+              }));
+            }
+            if (msg.done && Array.isArray(msg.rows)) {
+              finalRows = msg.rows;
+            }
+          } catch (e) {
+            if (e.message !== 'Unexpected end of JSON input') throw e;
+          }
+        }
+      }
+
+      if (!finalRows) throw new Error('Stream completed without data. Try a shorter date range.');
+
+      let merged;
+      if (mode === 'list' && bodList) {
+        const spendByAccGrp = {}, spendByAccCamp = {};
+        finalRows.forEach(r => {
+          const kAG = `${r.accountId}_${r.campaignGroupId}`;
+          spendByAccGrp[kAG] = (spendByAccGrp[kAG] || 0) + (r.localSpend || 0);
+          const kAC = `${r.accountId}_${(r.campaignName||'').toLowerCase()}`;
+          spendByAccCamp[kAC] = (spendByAccCamp[kAC] || 0) + (r.localSpend || 0);
+        });
+        merged = bodList.rows.map(r => {
+          const spend = spendByAccGrp[`${r.accountId}_${r.campaignGroupId}`]
+                     || spendByAccCamp[`${r.accountId}_${(r.campaignName||'').toLowerCase()}`] || 0;
+          return { ...r, localSpend: spend, mediaSpendUSD: spend, exchangeRate: r.fileExchangeRate || exchangeRate };
+        });
+      } else {
+        merged = applyRef(finalRows, ref);
+      }
+
+      setRows(merged);
+      setLastRefresh(new Date());
+      setProgress(p => ({ ...p, pct: 100, message: `Complete — ${merged.length} rows` }));
     } catch (e) { setError(e.message); }
     setLoading(false);
   }
@@ -736,20 +772,40 @@ export default function BODTab() {
       {/* ══ TABLE ══ */}
       <div className="flex-1 overflow-auto">
         {loading ? (
-          <div className="flex flex-col items-center justify-center h-64 gap-4">
-            <div className="relative">
-              <RefreshCw className="w-10 h-10 text-blue-500 animate-spin" />
+          <div className="flex flex-col items-center justify-center h-full gap-6 px-8">
+            <RefreshCw className="w-10 h-10 text-blue-500 animate-spin shrink-0" />
+
+            {/* Progress bar */}
+            <div className="w-full max-w-md space-y-2">
+              <div className="flex justify-between text-xs text-slate-400 mb-1">
+                <span>{progress.message || 'Loading…'}</span>
+                <span className="font-mono text-blue-400">{progress.pct}%</span>
+              </div>
+              <div className="w-full bg-slate-700 rounded-full h-2.5 overflow-hidden">
+                <div
+                  className="h-2.5 rounded-full transition-all duration-500"
+                  style={{
+                    width: `${progress.pct}%`,
+                    background: progress.pct === 100 ? '#10b981' : '#3b82f6',
+                  }}
+                />
+              </div>
             </div>
+
+            {/* Phase detail */}
             <div className="text-center space-y-1">
-              <p className="text-slate-300 text-sm font-semibold">
-                {mode === 'list'
-                  ? `Fetching spend for ${bodList?.accountIds?.length || 0} accounts in your BOD list…`
-                  : `Fetching spend for ${activeAccCount.toLocaleString()} account${activeAccCount !== 1 ? 's' : ''}…`}
-              </p>
-              <p className="text-slate-500 text-xs">{startDate} → {endDate}</p>
-              <p className="text-slate-600 text-xs mt-1">
-                Phase 1: identifying accounts with spend · Phase 2: fetching campaign detail
-              </p>
+              {progress.phase >= 1 && progress.spendingCount > 0 && (
+                <p className="text-xs text-emerald-400">
+                  ✓ {progress.spendingCount.toLocaleString()} accounts with spend
+                  {progress.totalCount > 0 && ` (of ${progress.totalCount.toLocaleString()} scanned)`}
+                </p>
+              )}
+              {progress.phase === 2 && progress.rowsSoFar > 0 && (
+                <p className="text-xs text-sky-400">
+                  {progress.rowsSoFar.toLocaleString()} campaign rows found so far…
+                </p>
+              )}
+              <p className="text-xs text-slate-600">{startDate} → {endDate}</p>
             </div>
           </div>
         ) : error ? (

@@ -1,17 +1,19 @@
 import { getToken } from 'next-auth/jwt';
-import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
+// Vercel max duration — set this in vercel.json too
+export const maxDuration = 300;
 
 const LI = (token) => ({ Authorization: `Bearer ${token}`, 'LinkedIn-Version': '202401' });
 
 async function liGet(url, accessToken) {
-  const res = await fetch(url, { headers: LI(accessToken) });
-  if (!res.ok) return null;
-  return res.json();
+  try {
+    const res = await fetch(url, { headers: LI(accessToken), signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return null;
+    return res.json();
+  } catch { return null; }
 }
 
-// Build URLSearchParams for a date range
 function dateParams(start, end) {
   return {
     'dateRange.start.year':  start.getFullYear(),
@@ -23,198 +25,196 @@ function dateParams(start, end) {
   };
 }
 
-// ── Step 1: Get account-level spend for up to 20 accounts in one call ──────────
-// Returns { accountId: spend }
-async function getAccountSpend(accountIds, dp, accessToken) {
-  const p = new URLSearchParams({
-    q: 'analytics',
-    pivot: 'ACCOUNT',
-    timeGranularity: 'ALL',
-    ...dp,
-    fields: 'costInLocalCurrency,pivotValues',
-  });
-  accountIds.forEach((id, i) =>
-    p.append(`accounts[${i}]`, `urn:li:sponsoredAccount:${id}`)
-  );
-  const data = await liGet(
-    `https://api.linkedin.com/v2/adAnalyticsV2?${p.toString()}`,
-    accessToken
-  );
-  const result = {};
-  (data?.elements || []).forEach(el => {
-    const urn   = el.pivotValues?.[0] || '';
-    const id    = urn.split(':').pop();
-    const spend = parseFloat(el.costInLocalCurrency || 0);
-    if (spend > 0) result[id] = (result[id] || 0) + spend;
-  });
-  return result;
-}
-
-// ── Step 2: Get campaign-level spend for up to 20 campaigns in one call ────────
-async function getCampaignSpend(campaignIds, dp, accessToken) {
-  const p = new URLSearchParams({
-    q: 'analytics',
-    pivot: 'CAMPAIGN',
-    timeGranularity: 'ALL',
-    ...dp,
-    fields: 'costInLocalCurrency,pivotValues',
-  });
-  campaignIds.forEach((cid, i) =>
-    p.append(`campaigns[${i}]`, `urn:li:sponsoredCampaign:${cid}`)
-  );
-  const data = await liGet(
-    `https://api.linkedin.com/v2/adAnalyticsV2?${p.toString()}`,
-    accessToken
-  );
-  const result = {};
-  (data?.elements || []).forEach(el => {
-    const urn   = el.pivotValues?.[0] || '';
-    const cid   = urn.split(':').pop();
-    const spend = parseFloat(el.costInLocalCurrency || 0);
-    if (spend > 0) result[cid] = (result[cid] || 0) + spend;
-  });
-  return result;
-}
-
-// Chunk array into groups of n
 function chunk(arr, n) {
   const out = [];
   for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
   return out;
 }
 
-export async function POST(request) {
-  try {
-    const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
-    if (!token?.accessToken) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
+// Run promises with max N concurrent at a time
+async function pooled(items, concurrency, fn) {
+  const results = [];
+  for (const batch of chunk(items, concurrency)) {
+    const batchResults = await Promise.all(batch.map(fn));
+    results.push(...batchResults);
+  }
+  return results;
+}
 
-    const { accountIds, startDate, endDate } = await request.json();
-    if (!accountIds?.length) {
-      return NextResponse.json({ error: 'No accounts provided' }, { status: 400 });
-    }
+async function getAccountSpend(accountIds, dp, accessToken) {
+  const p = new URLSearchParams({
+    q: 'analytics', pivot: 'ACCOUNT', timeGranularity: 'ALL', ...dp,
+    fields: 'costInLocalCurrency,pivotValues',
+  });
+  accountIds.forEach((id, i) => p.append(`accounts[${i}]`, `urn:li:sponsoredAccount:${id}`));
+  const data = await liGet(`https://api.linkedin.com/v2/adAnalyticsV2?${p}`, accessToken);
+  const result = {};
+  (data?.elements || []).forEach(el => {
+    const id = (el.pivotValues?.[0] || '').split(':').pop();
+    const spend = parseFloat(el.costInLocalCurrency || 0);
+    if (spend > 0) result[id] = (result[id] || 0) + spend;
+  });
+  return result;
+}
 
-    const now   = new Date();
-    const start = startDate ? new Date(startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
-    const end   = endDate   ? new Date(endDate)   : now;
-    const clEnd = end > now ? now : end;
-    const dp    = dateParams(start, clEnd);
+async function getCampaignSpend(campaignIds, dp, accessToken) {
+  const p = new URLSearchParams({
+    q: 'analytics', pivot: 'CAMPAIGN', timeGranularity: 'ALL', ...dp,
+    fields: 'costInLocalCurrency,pivotValues',
+  });
+  campaignIds.forEach((cid, i) => p.append(`campaigns[${i}]`, `urn:li:sponsoredCampaign:${cid}`));
+  const data = await liGet(`https://api.linkedin.com/v2/adAnalyticsV2?${p}`, accessToken);
+  const result = {};
+  (data?.elements || []).forEach(el => {
+    const cid = (el.pivotValues?.[0] || '').split(':').pop();
+    const spend = parseFloat(el.costInLocalCurrency || 0);
+    if (spend > 0) result[cid] = (result[cid] || 0) + spend;
+  });
+  return result;
+}
 
-    // ── Phase 1: Identify which accounts have spend (batched, 20 at a time) ────
-    const accountSpend = {};
-    await Promise.all(
-      chunk(accountIds, 20).map(async (batch) => {
-        const result = await getAccountSpend(batch, dp, token.accessToken);
-        Object.assign(accountSpend, result);
-      })
+async function processAccount(accountId, dp, accessToken) {
+  const accUrn = `urn:li:sponsoredAccount:${accountId}`;
+  const campaigns = [];
+  let campStart = 0;
+  while (campStart < 2000) {
+    const data = await liGet(
+      `https://api.linkedin.com/v2/adCampaignsV2?q=search` +
+      `&search.account.values[0]=${encodeURIComponent(accUrn)}&count=200&start=${campStart}`,
+      accessToken
     );
+    const els = data?.elements || [];
+    campaigns.push(...els);
+    if (els.length < 200) break;
+    campStart += 200;
+  }
+  if (!campaigns.length) return [];
 
-    const spendingAccountIds = Object.keys(accountSpend);
-    if (spendingAccountIds.length === 0) {
-      return NextResponse.json({ rows: [], total: 0 });
-    }
+  const campMeta = {};
+  const groupIds = new Set();
+  campaigns.forEach(c => {
+    const cid = String(c.id);
+    const gid = (c.campaignGroup || '').split(':').pop();
+    campMeta[cid] = {
+      name: c.name || '', type: c.type || '', groupId: gid, groupName: '',
+      campStart: c.runSchedule?.start ? new Date(c.runSchedule.start).toISOString().split('T')[0] : '',
+      campEnd:   c.runSchedule?.end   ? new Date(c.runSchedule.end).toISOString().split('T')[0]   : '',
+    };
+    if (gid) groupIds.add(gid);
+  });
 
-    // ── Phase 2: For spending accounts, fetch campaigns + campaign spend ────────
-    const allRows = [];
+  // Fetch group names (pooled, 5 at a time)
+  await pooled([...groupIds], 5, async (gid) => {
+    const g = await liGet(`https://api.linkedin.com/v2/adCampaignGroupsV2/${gid}`, accessToken);
+    if (g?.name) Object.values(campMeta).forEach(m => { if (m.groupId === gid) m.groupName = g.name; });
+  });
 
-    await Promise.all(spendingAccountIds.map(async (accountId) => {
+  // Get campaign spend in batches of 20, pooled 3 at a time
+  const campIds = campaigns.map(c => String(c.id));
+  const spendMap = {};
+  await pooled(chunk(campIds, 20), 3, async (batch) => {
+    const result = await getCampaignSpend(batch, dp, accessToken);
+    Object.assign(spendMap, result);
+  });
+
+  return Object.entries(spendMap).map(([cid, localSpend]) => {
+    const meta = campMeta[cid];
+    if (!meta) return null;
+    return {
+      accountId: String(accountId), campaignGroupId: meta.groupId || '',
+      campaignGroupName: meta.groupName || '', campaignName: meta.name,
+      adUnit: meta.type, campStartDate: meta.campStart, campEndDate: meta.campEnd,
+      localSpend, mediaSpendUSD: localSpend,
+    };
+  }).filter(Boolean);
+}
+
+export async function POST(request) {
+  const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
+  if (!token?.accessToken) {
+    return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 });
+  }
+
+  const { accountIds, startDate, endDate } = await request.json();
+  if (!accountIds?.length) {
+    return new Response(JSON.stringify({ error: 'No accounts provided' }), { status: 400 });
+  }
+
+  const now   = new Date();
+  const start = startDate ? new Date(startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
+  const end   = endDate   ? new Date(endDate)   : now;
+  const dp    = dateParams(start, end > now ? now : end);
+
+  // ── Stream response back to client ──────────────────────────────────────────
+  const encoder = new TextEncoder();
+  const stream  = new ReadableStream({
+    async start(controller) {
+      const send = (obj) => {
+        try { controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n')); } catch {}
+      };
+
       try {
-        const accUrn = `urn:li:sponsoredAccount:${accountId}`;
+        // Phase 1: find all accounts with spend (pool 10 batches of 20 at a time)
+        send({ phase: 1, message: 'Identifying accounts with spend…', progress: 0 });
 
-        // Fetch all campaigns for this account (paginate up to 1000)
-        const campaigns = [];
-        let campStart = 0;
-        while (true) {
-          const data = await liGet(
-            `https://api.linkedin.com/v2/adCampaignsV2?q=search` +
-            `&search.account.values[0]=${encodeURIComponent(accUrn)}` +
-            `&count=200&start=${campStart}`,
-            token.accessToken
-          );
-          const els = data?.elements || [];
-          campaigns.push(...els);
-          if (els.length < 200) break;
-          campStart += 200;
-          if (campStart >= 1000) break;
+        const accountSpend = {};
+        const batches = chunk(accountIds, 20);
+        await pooled(batches, 10, async (batch) => {
+          const result = await getAccountSpend(batch, dp, token.accessToken);
+          Object.assign(accountSpend, result);
+        });
+
+        const spendingIds = Object.keys(accountSpend);
+        send({ phase: 1, done: true, spendingCount: spendingIds.length, totalCount: accountIds.length });
+
+        if (spendingIds.length === 0) {
+          send({ done: true, rows: [], total: 0 });
+          controller.close();
+          return;
         }
 
-        if (!campaigns.length) return;
+        // Phase 2: process each spending account (pool 5 at a time to avoid rate limits)
+        send({ phase: 2, message: `Fetching campaign detail for ${spendingIds.length} accounts…`, progress: 0 });
 
-        // Build campaign metadata lookup
-        const campMeta = {};
-        const groupIds = new Set();
-        campaigns.forEach(c => {
-          const cid  = String(c.id);
-          const gurn = c.campaignGroup || '';
-          const gid  = gurn ? gurn.split(':').pop() : '';
-          campMeta[cid] = {
-            name:      c.name || '',
-            type:      c.type || '',
-            groupId:   gid,
-            groupName: '',
-            campStart: c.runSchedule?.start
-              ? new Date(c.runSchedule.start).toISOString().split('T')[0] : '',
-            campEnd:   c.runSchedule?.end
-              ? new Date(c.runSchedule.end).toISOString().split('T')[0]   : '',
-          };
-          if (gid) groupIds.add(gid);
+        let processed = 0;
+        const allRows = [];
+
+        await pooled(spendingIds, 5, async (accountId) => {
+          const rows = await processAccount(accountId, dp, token.accessToken);
+          allRows.push(...rows);
+          processed++;
+          // Send progress every 5 accounts
+          if (processed % 5 === 0 || processed === spendingIds.length) {
+            send({
+              phase: 2,
+              progress: Math.round((processed / spendingIds.length) * 100),
+              processed,
+              total: spendingIds.length,
+              rowsSoFar: allRows.length,
+            });
+          }
         });
 
-        // Fetch group names in parallel (deduplicated)
-        await Promise.all([...groupIds].map(async (gid) => {
-          try {
-            const g = await liGet(
-              `https://api.linkedin.com/v2/adCampaignGroupsV2/${gid}`,
-              token.accessToken
-            );
-            const name = g?.name || '';
-            Object.values(campMeta).forEach(m => {
-              if (m.groupId === gid) m.groupName = name;
-            });
-          } catch {}
-        }));
-
-        // Get campaign-level spend (batches of 20)
-        const campIds  = campaigns.map(c => String(c.id));
-        const spendMap = {};
-        await Promise.all(
-          chunk(campIds, 20).map(async (batch) => {
-            const result = await getCampaignSpend(batch, dp, token.accessToken);
-            Object.assign(spendMap, result);
-          })
+        allRows.sort((a, b) =>
+          a.accountId.localeCompare(b.accountId) ||
+          a.campaignGroupId.localeCompare(b.campaignGroupId)
         );
 
-        // Emit one row per campaign with spend
-        Object.entries(spendMap).forEach(([cid, localSpend]) => {
-          const meta = campMeta[cid];
-          if (!meta) return;
-          allRows.push({
-            accountId:         String(accountId),
-            campaignGroupId:   meta.groupId   || '',
-            campaignGroupName: meta.groupName || '',
-            campaignName:      meta.name,
-            adUnit:            meta.type,
-            campStartDate:     meta.campStart,
-            campEndDate:       meta.campEnd,
-            localSpend,
-            mediaSpendUSD:     localSpend,
-          });
-        });
-
-      } catch (e) {
-        console.error(`Account ${accountId} error:`, e.message);
+        send({ done: true, rows: allRows, total: allRows.length });
+      } catch (err) {
+        send({ error: err.message });
       }
-    }));
 
-    allRows.sort((a, b) =>
-      a.accountId.localeCompare(b.accountId) ||
-      a.campaignGroupId.localeCompare(b.campaignGroupId)
-    );
+      controller.close();
+    },
+  });
 
-    return NextResponse.json({ rows: allRows, total: allRows.length });
-  } catch (error) {
-    console.error('BOD API error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'application/x-ndjson',
+      'Transfer-Encoding': 'chunked',
+      'X-Accel-Buffering': 'no', // disable proxy buffering (nginx/Vercel)
+      'Cache-Control': 'no-cache',
+    },
+  });
 }
