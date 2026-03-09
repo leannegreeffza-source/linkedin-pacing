@@ -4,7 +4,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import {
   RefreshCw, FileSpreadsheet, Eye, EyeOff, Search, X,
-  Upload, ChevronDown, Calendar, List, Users, AlertCircle, CheckCircle2
+  Upload, ChevronDown, Calendar, List, Users, AlertCircle, CheckCircle2,
+  Percent, Tag, Plus, Trash2
 } from 'lucide-react';
 
 // ─── Column definitions (exact 202602 BOD with PMF order) ───────────────────
@@ -66,22 +67,29 @@ function fmtCell(val, fmt) {
   return String(val);
 }
 
-function computeRow(r, exchangeRate) {
-  const pmfUSD        = (r.mediaSpendUSD || 0) * (r.pmfPercentage || 0);
-  const mediaSpendZAR = (r.mediaSpendUSD || 0) * exchangeRate;
-  const pmfZAR        = pmfUSD * exchangeRate;
+function computeRow(r, exchangeRate, categoryRates) {
+  // Category rate overrides row-level pmfPercentage when set
+  const catKey   = (r.category || '').trim();
+  const catRate  = categoryRates && catKey && categoryRates[catKey] != null
+    ? categoryRates[catKey]
+    : (r.pmfPercentage || 0);
+  const pmfUSD        = (r.mediaSpendUSD || 0) * catRate;
+  const fx            = r.fileExchangeRate || exchangeRate;
+  const mediaSpendZAR = (r.mediaSpendUSD || 0) * fx;
+  const pmfZAR        = pmfUSD * fx;
   return {
     ...r,
     partner:       'LinkedIn',
     io2:           r.io || '',
     itemCode:      `${r.accountId}_${r.campaignGroupId}_ME`,
-    exchangeRate,
+    pmfPercentage: catRate,   // show the effective rate in the cell
+    exchangeRate:  fx,
     pmfUSD,
     mediaSpendZAR,
     pmfZAR,
     currencySpend: 'USD',
     grossZAR:      mediaSpendZAR + pmfZAR,
-    pmfPct:        r.pmfPercentage || 0,
+    pmfPct:        catRate,
   };
 }
 
@@ -314,6 +322,79 @@ async function exportToExcel(rows, startDate, endDate) {
   XLSX.writeFile(wb, `${monthStr}_BOD_with_PMF_${startDate}_to_${endDate}.xlsx`);
 }
 
+// ─── AddCategoryRow — small form to add a new category+rate ─────────────────
+function AddCategoryRow({ existingCategories, rowCategories, onAdd }) {
+  const [cat, setCat]   = useState('');
+  const [pct, setPct]   = useState('');
+  const [open, setOpen] = useState(false);
+  const inputRef        = useRef();
+
+  const suggestions = rowCategories.filter(
+    c => c && !existingCategories.includes(c) &&
+    (!cat || c.toLowerCase().includes(cat.toLowerCase()))
+  );
+
+  function commit() {
+    const trimmed = cat.trim();
+    const val     = parseFloat(pct);
+    if (!trimmed || isNaN(val)) return;
+    onAdd(trimmed, val);
+    setCat(''); setPct(''); setOpen(false);
+  }
+
+  return (
+    <div className="border-t border-slate-700 pt-2 mt-1">
+      <p className="text-xs text-slate-500 mb-1.5">Add category rate:</p>
+      <div className="flex gap-1.5">
+        {/* Category name input with autocomplete from existing rows */}
+        <div className="relative flex-1">
+          <input
+            ref={inputRef}
+            value={cat}
+            onChange={e => { setCat(e.target.value); setOpen(true); }}
+            onFocus={() => setOpen(true)}
+            onBlur={() => setTimeout(() => setOpen(false), 150)}
+            placeholder="Category name…"
+            className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+          />
+          {open && suggestions.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-0.5 bg-slate-700 border border-slate-600 rounded-lg shadow-xl z-50 max-h-36 overflow-y-auto">
+              {suggestions.slice(0, 10).map(s => (
+                <div
+                  key={s}
+                  onMouseDown={() => { setCat(s); setOpen(false); }}
+                  className="px-2.5 py-1.5 text-xs text-slate-200 hover:bg-purple-700/60 cursor-pointer truncate">
+                  {s}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* PMF % input */}
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          max="100"
+          value={pct}
+          onChange={e => setPct(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && commit()}
+          placeholder="%"
+          className="w-16 px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-yellow-300 font-bold placeholder-slate-500 focus:outline-none focus:border-purple-500 text-right"
+        />
+
+        <button
+          onClick={commit}
+          disabled={!cat.trim() || pct === ''}
+          className="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white rounded-lg transition-colors">
+          <Plus className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main BOD Tab ─────────────────────────────────────────────────────────────
 export default function BODTab() {
   const { data: session } = useSession();
@@ -346,6 +427,9 @@ export default function BODTab() {
   const [editRate, setEditRate]   = useState(false);
   const [rateInput, setRateInput] = useState('18');
   const [search, setSearch]       = useState('');
+  const [categoryRates, setCategoryRates] = useState(() => lsGet('bod_category_rates', {})); // { 'Monthly Rate': 0.05 }
+  const [showCatMenu, setShowCatMenu]     = useState(false);
+  const catMenuRef = useRef();
 
   const refFileRef  = useRef();
   const bodFileRef  = useRef();
@@ -373,9 +457,12 @@ export default function BODTab() {
       .catch(() => setLoadingAccs(false));
   }, [session]);
 
-  // ── Close dropdown on outside click ──────────────────────────────
+  // ── Close dropdowns on outside click ───────────────────────────────────────
   useEffect(() => {
-    function h(e) { if (menuRef.current && !menuRef.current.contains(e.target)) setShowAccMenu(false); }
+    function h(e) {
+      if (menuRef.current    && !menuRef.current.contains(e.target))    setShowAccMenu(false);
+      if (catMenuRef.current && !catMenuRef.current.contains(e.target)) setShowCatMenu(false);
+    }
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
@@ -556,7 +643,7 @@ export default function BODTab() {
       .some(v => v && String(v).toLowerCase().includes(s));
   });
 
-  const computedRows = filteredRows.map(r => computeRow(r, r.fileExchangeRate || exchangeRate));
+  const computedRows = filteredRows.map(r => computeRow(r, exchangeRate, categoryRates));
 
   const totals = computedRows.reduce((t, r) => ({
     localSpend:    t.localSpend    + (r.localSpend    || 0),
@@ -652,6 +739,95 @@ export default function BODTab() {
               className="text-xs font-bold text-yellow-300 hover:text-yellow-200 min-w-[2rem]">
               {exchangeRate}
             </button>
+          )}
+        </div>
+
+        {/* ── Category Rates button + dropdown ─────────────────────────────── */}
+        <div className="relative" ref={catMenuRef}>
+          <button
+            onClick={() => setShowCatMenu(v => !v)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+              Object.keys(categoryRates).length > 0
+                ? 'bg-purple-700 border-purple-600 text-white'
+                : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'
+            }`}>
+            <Percent className="w-3.5 h-3.5" />
+            Category Rates
+            {Object.keys(categoryRates).length > 0 && (
+              <span className="bg-white/20 rounded-full px-1.5 text-xs font-bold">
+                {Object.keys(categoryRates).length}
+              </span>
+            )}
+          </button>
+
+          {showCatMenu && (
+            <div className="absolute right-0 top-9 z-30 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-80 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5 text-purple-400" />
+                  Category PMF Rates
+                </p>
+                <span className="text-xs text-slate-500">Overrides ref sheet values</span>
+              </div>
+
+              {/* Existing category rates */}
+              <div className="space-y-1.5 max-h-56 overflow-y-auto mb-2">
+                {Object.keys(categoryRates).length === 0 && (
+                  <p className="text-xs text-slate-500 text-center py-3">
+                    No category rates set yet. Add one below.
+                  </p>
+                )}
+                {Object.entries(categoryRates).map(([cat, rate]) => (
+                  <div key={cat} className="flex items-center gap-2 bg-slate-700 rounded-lg px-2.5 py-1.5">
+                    <span className="flex-1 text-xs text-white truncate" title={cat}>{cat}</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      value={(rate * 100).toFixed(2)}
+                      onChange={e => {
+                        const pct = parseFloat(e.target.value);
+                        const newRates = { ...categoryRates, [cat]: isNaN(pct) ? 0 : pct / 100 };
+                        setCategoryRates(newRates);
+                        lsSet('bod_category_rates', newRates);
+                      }}
+                      className="w-16 bg-slate-600 text-yellow-300 text-xs font-bold rounded px-1.5 py-0.5 text-right focus:outline-none focus:ring-1 focus:ring-purple-500"
+                    />
+                    <span className="text-xs text-slate-400">%</span>
+                    <button
+                      onClick={() => {
+                        const { [cat]: _, ...rest } = categoryRates;
+                        setCategoryRates(rest);
+                        lsSet('bod_category_rates', rest);
+                      }}
+                      className="text-slate-500 hover:text-red-400 transition-colors">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add new category */}
+              <AddCategoryRow
+                existingCategories={Object.keys(categoryRates)}
+                rowCategories={[...new Set(rows.map(r => r.category).filter(Boolean))].sort()}
+                onAdd={(cat, pct) => {
+                  const newRates = { ...categoryRates, [cat]: pct / 100 };
+                  setCategoryRates(newRates);
+                  lsSet('bod_category_rates', newRates);
+                }}
+              />
+
+              {/* Clear all */}
+              {Object.keys(categoryRates).length > 0 && (
+                <button
+                  onClick={() => { setCategoryRates({}); lsSet('bod_category_rates', {}); }}
+                  className="w-full mt-2 py-1.5 bg-slate-700 hover:bg-red-900/40 text-slate-400 hover:text-red-400 text-xs rounded-lg border border-slate-600 transition-colors">
+                  Clear all category rates
+                </button>
+              )}
+            </div>
           )}
         </div>
 
@@ -867,14 +1043,19 @@ export default function BODTab() {
                   {COLS.map(col => {
                     const val = row[col.key];
                     // Highlight rows with no spend fetched in BOD list mode
-                    const noSpend = mode === 'list' && (col.key === 'localSpend' || col.key === 'mediaSpendUSD') && !val;
+                    const noSpend  = mode === 'list' && (col.key === 'localSpend' || col.key === 'mediaSpendUSD') && !val;
+                    const catKey   = (row.category || '').trim();
+                    const hasCatOverride = catKey && categoryRates[catKey] != null;
+                    const isCatRateCol   = hasCatOverride && (col.key === 'pmfPercentage' || col.key === 'pmfPct' || col.key === 'pmfUSD' || col.key === 'pmfZAR');
+                    const isCatCol       = hasCatOverride && col.key === 'category';
                     return (
                       <td key={col.key} style={{
                         minWidth: col.w, maxWidth: col.w + 80,
                         padding: '4px 8px',
                         borderRight: '1px solid rgba(100,116,139,0.2)',
                         borderBottom: '1px solid rgba(100,116,139,0.15)',
-                        color: noSpend ? '#64748b' : col.source === 'blue' ? '#7dd3fc' : '#e2e8f0',
+                        color: noSpend ? '#64748b' : isCatRateCol ? '#d8b4fe' : isCatCol ? '#c4b5fd' : col.source === 'blue' ? '#7dd3fc' : '#e2e8f0',
+                        background: isCatRateCol ? 'rgba(139,92,246,0.08)' : undefined,
                         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                         fontFamily: col.fmt ? 'monospace' : 'inherit',
                       }} title={val != null ? String(val) : ''}>
