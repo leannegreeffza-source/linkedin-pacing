@@ -67,14 +67,19 @@ function fmtCell(val, fmt) {
   return String(val);
 }
 
-function computeRow(r, exchangeRate, categoryRates) {
-  // Category rate overrides row-level pmfPercentage when set
-  const catKey   = (r.category || '').trim();
-  const catRate  = categoryRates && catKey && categoryRates[catKey] != null
-    ? categoryRates[catKey]
-    : (r.pmfPercentage || 0);
-  const pmfUSD        = (r.mediaSpendUSD || 0) * catRate;
-  const fx            = r.fileExchangeRate || exchangeRate;
+function computeRow(r, defaultFx, categoryRates) {
+  const catKey  = (r.category || '').trim();
+  const catConf = categoryRates && catKey ? categoryRates[catKey] : null;
+
+  // PMF: use category override if set, else row value from ref/file
+  const pmf = catConf?.pmf != null ? catConf.pmf : (r.pmfPercentage || 0);
+
+  // FX: priority → category override → file row value → default fallback
+  const fx  = catConf?.fx  != null ? catConf.fx
+             : r.fileExchangeRate   ? r.fileExchangeRate
+             : defaultFx;
+
+  const pmfUSD        = (r.mediaSpendUSD || 0) * pmf;
   const mediaSpendZAR = (r.mediaSpendUSD || 0) * fx;
   const pmfZAR        = pmfUSD * fx;
   return {
@@ -82,14 +87,14 @@ function computeRow(r, exchangeRate, categoryRates) {
     partner:       'LinkedIn',
     io2:           r.io || '',
     itemCode:      `${r.accountId}_${r.campaignGroupId}_ME`,
-    pmfPercentage: catRate,   // show the effective rate in the cell
+    pmfPercentage: pmf,
     exchangeRate:  fx,
     pmfUSD,
     mediaSpendZAR,
     pmfZAR,
     currencySpend: 'USD',
     grossZAR:      mediaSpendZAR + pmfZAR,
-    pmfPct:        catRate,
+    pmfPct:        pmf,
   };
 }
 
@@ -323,11 +328,11 @@ async function exportToExcel(rows, startDate, endDate) {
 }
 
 // ─── AddCategoryRow — small form to add a new category+rate ─────────────────
-function AddCategoryRow({ existingCategories, rowCategories, onAdd }) {
+function AddCategoryRow({ existingCategories, rowCategories, onAdd, defaultFx }) {
   const [cat, setCat]   = useState('');
   const [pct, setPct]   = useState('');
+  const [fx,  setFx]    = useState(String(defaultFx || 18));
   const [open, setOpen] = useState(false);
-  const inputRef        = useRef();
 
   const suggestions = rowCategories.filter(
     c => c && !existingCategories.includes(c) &&
@@ -336,58 +341,54 @@ function AddCategoryRow({ existingCategories, rowCategories, onAdd }) {
 
   function commit() {
     const trimmed = cat.trim();
-    const val     = parseFloat(pct);
-    if (!trimmed || isNaN(val)) return;
-    onAdd(trimmed, val);
-    setCat(''); setPct(''); setOpen(false);
+    const pmfVal  = parseFloat(pct);
+    const fxVal   = parseFloat(fx);
+    if (!trimmed || isNaN(pmfVal)) return;
+    onAdd(trimmed, pmfVal, isNaN(fxVal) ? (defaultFx || 18) : fxVal);
+    setCat(''); setPct(''); setFx(String(defaultFx || 18)); setOpen(false);
   }
 
   return (
-    <div className="border-t border-slate-700 pt-2 mt-1">
-      <p className="text-xs text-slate-500 mb-1.5">Add category rate:</p>
-      <div className="flex gap-1.5">
-        {/* Category name input with autocomplete from existing rows */}
-        <div className="relative flex-1">
-          <input
-            ref={inputRef}
-            value={cat}
-            onChange={e => { setCat(e.target.value); setOpen(true); }}
-            onFocus={() => setOpen(true)}
-            onBlur={() => setTimeout(() => setOpen(false), 150)}
-            placeholder="Category name…"
-            className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
-          />
-          {open && suggestions.length > 0 && (
-            <div className="absolute top-full left-0 right-0 mt-0.5 bg-slate-700 border border-slate-600 rounded-lg shadow-xl z-50 max-h-36 overflow-y-auto">
-              {suggestions.slice(0, 10).map(s => (
-                <div
-                  key={s}
-                  onMouseDown={() => { setCat(s); setOpen(false); }}
-                  className="px-2.5 py-1.5 text-xs text-slate-200 hover:bg-purple-700/60 cursor-pointer truncate">
-                  {s}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* PMF % input */}
+    <div className="border-t border-slate-700 pt-2 mt-1 space-y-1.5">
+      <p className="text-xs text-slate-500">Add category:</p>
+      {/* Category name with autocomplete */}
+      <div className="relative">
         <input
-          type="number"
-          step="0.01"
-          min="0"
-          max="100"
-          value={pct}
+          value={cat}
+          onChange={e => { setCat(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder="Category name…"
+          className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+        />
+        {open && suggestions.length > 0 && (
+          <div className="absolute top-full left-0 right-0 mt-0.5 bg-slate-700 border border-slate-600 rounded-lg shadow-xl z-50 max-h-32 overflow-y-auto">
+            {suggestions.slice(0, 8).map(s => (
+              <div key={s} onMouseDown={() => { setCat(s); setOpen(false); }}
+                className="px-2.5 py-1.5 text-xs text-slate-200 hover:bg-purple-700/60 cursor-pointer truncate">
+                {s}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {/* PMF % + FX + Add button */}
+      <div className="flex items-center gap-1.5">
+        <input type="number" step="0.01" min="0" max="100" value={pct}
           onChange={e => setPct(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && commit()}
-          placeholder="%"
-          className="w-16 px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-yellow-300 font-bold placeholder-slate-500 focus:outline-none focus:border-purple-500 text-right"
+          placeholder="PMF %"
+          className="flex-1 px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-yellow-300 font-bold placeholder-slate-500 focus:outline-none focus:border-purple-500 text-right"
         />
-
-        <button
-          onClick={commit}
-          disabled={!cat.trim() || pct === ''}
-          className="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white rounded-lg transition-colors">
+        <span className="text-xs text-slate-500">%</span>
+        <input type="number" step="0.01" min="0" value={fx}
+          onChange={e => setFx(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && commit()}
+          placeholder="FX"
+          className="flex-1 px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-emerald-300 font-bold placeholder-slate-500 focus:outline-none focus:border-emerald-500 text-right"
+        />
+        <button onClick={commit} disabled={!cat.trim() || pct === ''}
+          className="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white rounded-lg transition-colors shrink-0">
           <Plus className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -423,11 +424,9 @@ export default function BODTab() {
   const [error, setError]         = useState('');
   const [lastRefresh, setLastRefresh] = useState(null);
   const [progress, setProgress]   = useState({ phase: 0, pct: 0, message: '', spendingCount: 0, totalCount: 0, rowsSoFar: 0 });
-  const [exchangeRate, setExchangeRate] = useState(18);
-  const [editRate, setEditRate]   = useState(false);
-  const [rateInput, setRateInput] = useState('18');
+  const DEFAULT_FX = 18;
   const [search, setSearch]       = useState('');
-  const [categoryRates, setCategoryRates] = useState(() => lsGet('bod_category_rates', {})); // { 'Monthly Rate': 0.05 }
+  const [categoryRates, setCategoryRates] = useState(() => lsGet('bod_category_rates', {})); // { 'Monthly Rate': { pmf: 0.05, fx: 18 } }
   const [showCatMenu, setShowCatMenu]     = useState(false);
   const catMenuRef = useRef();
 
@@ -440,8 +439,7 @@ export default function BODTab() {
     const savedRef = lsGet('bod_ref_data_v1', null);
     if (savedRef) { setRef(savedRef); setRefCount(Object.keys(savedRef.byAccGrp || {}).length); }
     setExcludedIds(lsGet('bod_excluded_ids', []));
-    const r = lsGet('bod_exchange_rate', 18);
-    setExchangeRate(r); setRateInput(String(r));
+
   }, []);
 
   // ── Fetch all accounts the user has access to (up to 10,000) ────────────
@@ -550,7 +548,7 @@ export default function BODTab() {
         merged = bodList.rows.map(r => {
           const spend = spendByAccGrp[`${r.accountId}_${r.campaignGroupId}`]
                      || spendByAccCamp[`${r.accountId}_${(r.campaignName||'').toLowerCase()}`] || 0;
-          return { ...r, localSpend: spend, mediaSpendUSD: spend, exchangeRate: r.fileExchangeRate || exchangeRate };
+          return { ...r, localSpend: spend, mediaSpendUSD: spend }; // fx resolved per-category in computeRow
         });
       } else {
         merged = applyRef(finalRows, ref);
@@ -616,11 +614,7 @@ export default function BODTab() {
     });
   }
 
-  function commitRate() {
-    const r = parseFloat(rateInput);
-    if (!isNaN(r) && r > 0) { setExchangeRate(r); lsSet('bod_exchange_rate', r); }
-    setEditRate(false);
-  }
+
 
   const quickDates = [
     { label: 'This Month', fn: () => { setStartDate(firstOfMonth()); setEndDate(todayStr()); } },
@@ -643,7 +637,7 @@ export default function BODTab() {
       .some(v => v && String(v).toLowerCase().includes(s));
   });
 
-  const computedRows = filteredRows.map(r => computeRow(r, exchangeRate, categoryRates));
+  const computedRows = filteredRows.map(r => computeRow(r, DEFAULT_FX, categoryRates));
 
   const totals = computedRows.reduce((t, r) => ({
     localSpend:    t.localSpend    + (r.localSpend    || 0),
@@ -725,22 +719,7 @@ export default function BODTab() {
           )}
         </div>
 
-        {/* Exchange Rate (only relevant when not using file's own rate) */}
-        <div className="flex items-center gap-1.5 bg-slate-700 rounded-lg px-2.5 py-1.5 border border-slate-600">
-          <span className="text-xs text-slate-400">USD/ZAR</span>
-          {editRate ? (
-            <input autoFocus value={rateInput}
-              onChange={e => setRateInput(e.target.value)}
-              onBlur={commitRate}
-              onKeyDown={e => { if (e.key==='Enter') commitRate(); if (e.key==='Escape') setEditRate(false); }}
-              className="w-14 bg-slate-600 text-yellow-300 text-xs font-bold rounded px-1 py-0.5 focus:outline-none" />
-          ) : (
-            <button onClick={() => { setRateInput(String(exchangeRate)); setEditRate(true); }}
-              className="text-xs font-bold text-yellow-300 hover:text-yellow-200 min-w-[2rem]">
-              {exchangeRate}
-            </button>
-          )}
-        </div>
+
 
         {/* ── Category Rates button + dropdown ─────────────────────────────── */}
         <div className="relative" ref={catMenuRef}>
@@ -777,46 +756,67 @@ export default function BODTab() {
                     No category rates set yet. Add one below.
                   </p>
                 )}
-                {Object.entries(categoryRates).map(([cat, rate]) => (
-                  <div key={cat} className="flex items-center gap-2 bg-slate-700 rounded-lg px-2.5 py-1.5">
-                    <span className="flex-1 text-xs text-white truncate" title={cat}>{cat}</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="100"
-                      value={(rate * 100).toFixed(2)}
-                      onChange={e => {
-                        const pct = parseFloat(e.target.value);
-                        const newRates = { ...categoryRates, [cat]: isNaN(pct) ? 0 : pct / 100 };
-                        setCategoryRates(newRates);
-                        lsSet('bod_category_rates', newRates);
-                      }}
-                      className="w-16 bg-slate-600 text-yellow-300 text-xs font-bold rounded px-1.5 py-0.5 text-right focus:outline-none focus:ring-1 focus:ring-purple-500"
-                    />
-                    <span className="text-xs text-slate-400">%</span>
-                    <button
-                      onClick={() => {
-                        const { [cat]: _, ...rest } = categoryRates;
-                        setCategoryRates(rest);
-                        lsSet('bod_category_rates', rest);
-                      }}
-                      className="text-slate-500 hover:text-red-400 transition-colors">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
+                {Object.entries(categoryRates).map(([cat, conf]) => {
+                  const pmfVal = conf?.pmf != null ? (conf.pmf * 100).toFixed(2) : '0.00';
+                  const fxVal  = conf?.fx  != null ? conf.fx : DEFAULT_FX;
+                  return (
+                    <div key={cat} className="bg-slate-700/60 rounded-lg px-2.5 py-2 space-y-1.5">
+                      {/* Category name + delete */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-purple-300 truncate flex-1" title={cat}>{cat}</span>
+                        <button
+                          onClick={() => {
+                            const { [cat]: _, ...rest } = categoryRates;
+                            setCategoryRates(rest);
+                            lsSet('bod_category_rates', rest);
+                          }}
+                          className="text-slate-500 hover:text-red-400 transition-colors ml-2">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      {/* PMF % + FX rate side by side */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-400 w-10">PMF %</span>
+                        <input
+                          type="number" step="0.01" min="0" max="100"
+                          value={pmfVal}
+                          onChange={e => {
+                            const pct = parseFloat(e.target.value);
+                            const newRates = { ...categoryRates, [cat]: { ...conf, pmf: isNaN(pct) ? 0 : pct / 100 } };
+                            setCategoryRates(newRates);
+                            lsSet('bod_category_rates', newRates);
+                          }}
+                          className="w-16 bg-slate-600 text-yellow-300 text-xs font-bold rounded px-1.5 py-1 text-right focus:outline-none focus:ring-1 focus:ring-purple-500"
+                        />
+                        <span className="text-xs text-slate-400">%</span>
+                        <span className="text-xs text-slate-400 w-14 ml-2">USD/ZAR</span>
+                        <input
+                          type="number" step="0.01" min="0"
+                          value={fxVal}
+                          onChange={e => {
+                            const fx = parseFloat(e.target.value);
+                            const newRates = { ...categoryRates, [cat]: { ...conf, fx: isNaN(fx) ? DEFAULT_FX : fx } };
+                            setCategoryRates(newRates);
+                            lsSet('bod_category_rates', newRates);
+                          }}
+                          className="w-16 bg-slate-600 text-emerald-300 text-xs font-bold rounded px-1.5 py-1 text-right focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Add new category */}
               <AddCategoryRow
                 existingCategories={Object.keys(categoryRates)}
                 rowCategories={[...new Set(rows.map(r => r.category).filter(Boolean))].sort()}
-                onAdd={(cat, pct) => {
-                  const newRates = { ...categoryRates, [cat]: pct / 100 };
+                onAdd={(cat, pct, fx) => {
+                  const newRates = { ...categoryRates, [cat]: { pmf: pct / 100, fx } };
                   setCategoryRates(newRates);
                   lsSet('bod_category_rates', newRates);
                 }}
+                defaultFx={DEFAULT_FX}
               />
 
               {/* Clear all */}
@@ -1045,7 +1045,7 @@ export default function BODTab() {
                     // Highlight rows with no spend fetched in BOD list mode
                     const noSpend  = mode === 'list' && (col.key === 'localSpend' || col.key === 'mediaSpendUSD') && !val;
                     const catKey   = (row.category || '').trim();
-                    const hasCatOverride = catKey && categoryRates[catKey] != null;
+                    const hasCatOverride = catKey && categoryRates[catKey] != null && (categoryRates[catKey]?.pmf != null || categoryRates[catKey]?.fx != null);
                     const isCatRateCol   = hasCatOverride && (col.key === 'pmfPercentage' || col.key === 'pmfPct' || col.key === 'pmfUSD' || col.key === 'pmfZAR');
                     const isCatCol       = hasCatOverride && col.key === 'category';
                     return (
