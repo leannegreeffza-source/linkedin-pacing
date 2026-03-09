@@ -359,13 +359,16 @@ export default function BODTab() {
     setExchangeRate(r); setRateInput(String(r));
   }, []);
 
-  // ── Fetch all accounts (all-accounts mode) ────────────────────────
+  // ── Fetch all accounts the user has access to (up to 10,000) ────────────
   useEffect(() => {
     if (!session) return;
     setLoadingAccs(true);
     fetch('/api/accounts')
-      .then(r => r.json())
-      .then(data => { setAllAccounts(Array.isArray(data) ? data : []); setLoadingAccs(false); })
+      .then(async res => {
+        const data = await res.json();
+        setAllAccounts(Array.isArray(data) ? data : []);
+        setLoadingAccs(false);
+      })
       .catch(() => setLoadingAccs(false));
   }, [session]);
 
@@ -634,7 +637,7 @@ export default function BODTab() {
             <button onClick={() => setShowAccMenu(v => !v)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs font-medium border border-slate-600 transition-colors">
               {loadingAccs ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
-              <span>{loadingAccs ? 'Loading…' : `${activeAccCount} Accounts`}</span>
+              <span>{loadingAccs ? 'Loading accounts…' : `${activeAccCount.toLocaleString()} / ${allAccounts.length.toLocaleString()} Accounts`}</span>
               {excludedIds.length > 0 && (
                 <span className="bg-red-600 text-white text-xs font-bold rounded-full px-1.5">{excludedIds.length} hidden</span>
               )}
@@ -644,7 +647,7 @@ export default function BODTab() {
             {showAccMenu && (
               <div className="absolute right-0 top-9 z-30 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-80 p-3">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 px-1">
-                  Include / Exclude Accounts ({allAccounts.length} total)
+                  Include / Exclude Accounts ({allAccounts.length.toLocaleString()} total)
                 </p>
                 {allAccounts.length === 0
                   ? <p className="text-xs text-slate-500 py-3 text-center">No accounts found</p>
@@ -733,14 +736,21 @@ export default function BODTab() {
       {/* ══ TABLE ══ */}
       <div className="flex-1 overflow-auto">
         {loading ? (
-          <div className="flex flex-col items-center justify-center h-64 gap-3">
-            <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
-            <p className="text-slate-400 text-sm">
-              {mode === 'list'
-                ? `Fetching spend for ${bodList?.accountIds?.length || 0} accounts in your BOD list…`
-                : `Fetching spend for ${activeAccCount} account${activeAccCount !== 1 ? 's' : ''}…`}
-            </p>
-            <p className="text-slate-500 text-xs">{startDate} → {endDate}</p>
+          <div className="flex flex-col items-center justify-center h-64 gap-4">
+            <div className="relative">
+              <RefreshCw className="w-10 h-10 text-blue-500 animate-spin" />
+            </div>
+            <div className="text-center space-y-1">
+              <p className="text-slate-300 text-sm font-semibold">
+                {mode === 'list'
+                  ? `Fetching spend for ${bodList?.accountIds?.length || 0} accounts in your BOD list…`
+                  : `Fetching spend for ${activeAccCount.toLocaleString()} account${activeAccCount !== 1 ? 's' : ''}…`}
+              </p>
+              <p className="text-slate-500 text-xs">{startDate} → {endDate}</p>
+              <p className="text-slate-600 text-xs mt-1">
+                Phase 1: identifying accounts with spend · Phase 2: fetching campaign detail
+              </p>
+            </div>
           </div>
         ) : error ? (
           <div className="flex items-center justify-center h-64">
