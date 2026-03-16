@@ -203,10 +203,12 @@ export default function KenyaTab() {
     if (session) fetchData();
   }, [session]);
 
+  const [warning, setWarning] = useState('');
+
   async function fetchData() {
     if (!session) return;
-    setLoading(true); setError('');
-    setProgress({ pct: 0, processed: 0, total: 15, rowsSoFar: 0, message: 'Starting…' });
+    setLoading(true); setError(''); setWarning('');
+    setProgress({ pct: 0, processed: 0, total: 15, rowsSoFar: 0, message: 'Connecting to LinkedIn…' });
 
     try {
       const res = await fetch('/api/kenya', {
@@ -237,26 +239,33 @@ export default function KenyaTab() {
           try {
             const msg = JSON.parse(line);
             if (msg.error) throw new Error(msg.error);
-            if (msg.phase === 1) {
-              setProgress({
-                pct:       msg.total ? Math.round((msg.processed / msg.total) * 100) : 0,
-                processed: msg.processed || 0,
-                total:     msg.total     || 15,
-                rowsSoFar: msg.rowsSoFar || 0,
-                message:   msg.message  || `${msg.processed}/${msg.total} campaigns…`,
-              });
+
+            // All phases send pct + message directly now
+            if (msg.pct != null || msg.message) {
+              setProgress(p => ({
+                ...p,
+                pct:       msg.pct       ?? p.pct,
+                message:   msg.message   ?? p.message,
+                processed: msg.processed ?? p.processed,
+                total:     msg.total     ?? p.total,
+                rowsSoFar: msg.rowsSoFar ?? p.rowsSoFar,
+              }));
             }
-            if (msg.done && Array.isArray(msg.rows)) finalRows = msg.rows;
+
+            if (msg.done && Array.isArray(msg.rows)) {
+              finalRows = msg.rows;
+              if (msg.warning) setWarning(msg.warning);
+            }
           } catch (e) {
             if (e.message !== 'Unexpected end of JSON input') throw e;
           }
         }
       }
 
-      if (!finalRows) throw new Error('No data received. Check your date range.');
+      if (!finalRows) throw new Error('Stream ended without data. Try again or check your date range.');
       setRows(finalRows);
       setLastRefresh(new Date());
-      setProgress(p => ({ ...p, pct: 100, message: `Complete — ${finalRows.length} rows` }));
+      setProgress(p => ({ ...p, pct: 100, message: `Complete — ${finalRows.length} rows loaded` }));
     } catch (e) {
       setError(e.message);
     }
@@ -367,6 +376,14 @@ export default function KenyaTab() {
               LinkedIn_{`${String(new Date().getFullYear()).slice(2)}${String(new Date().getMonth()+1).padStart(2,'0')}${String(new Date().getDate()).padStart(2,'0')}`}
             </span>
           </span>
+        </div>
+      )}
+
+      {/* ══ WARNING BANNER ══ */}
+      {warning && !loading && (
+        <div className="bg-yellow-900/30 border-b border-yellow-700/50 px-4 py-2 flex items-start gap-2 shrink-0">
+          <AlertCircle className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" />
+          <p className="text-xs text-yellow-300">{warning}</p>
         </div>
       )}
 
