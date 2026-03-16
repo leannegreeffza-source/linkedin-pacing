@@ -3,11 +3,9 @@ import { getToken } from 'next-auth/jwt';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-// Use the latest stable LinkedIn API version that supports video quartile fields
 const LI_HEADERS = (t) => ({
   Authorization: `Bearer ${t}`,
-  'LinkedIn-Version': '202501',
-  'X-Restli-Protocol-Version': '2.0.0',
+  'LinkedIn-Version': '202401',
 });
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -15,23 +13,20 @@ function toMMDDYYYY(str) { const [y, m, d] = str.split('-'); return `${m}/${d}/$
 
 async function liGet(url, token) {
   try {
-    const res = await fetch(url, {
-      headers: LI_HEADERS(token),
-      signal: AbortSignal.timeout(20000),
-    });
-    const text = await res.text();
+    const res = await fetch(url, { headers: LI_HEADERS(token), signal: AbortSignal.timeout(20000) });
     if (!res.ok) {
-      console.error(`liGet ${res.status} ${url.slice(0, 150)}\n  body: ${text.slice(0, 300)}`);
+      const body = await res.text();
+      console.error(`liGet ${res.status}: ${url.slice(0, 120)} — ${body.slice(0, 200)}`);
       return null;
     }
-    return JSON.parse(text);
+    return res.json();
   } catch (e) {
     console.error(`liGet exception: ${e.message}`);
     return null;
   }
 }
 
-// ── GET: return all ad accounts for the signed-in user ───────────────────────
+// ── GET: all ad accounts for signed-in user ───────────────────────────────────
 export async function GET(request) {
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
   if (!token?.accessToken) {
@@ -59,26 +54,29 @@ export async function GET(request) {
   return Response.json(accounts);
 }
 
-// ── POST ─────────────────────────────────────────────────────────────────────
+// ── POST ──────────────────────────────────────────────────────────────────────
 export async function POST(request) {
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
   if (!token?.accessToken) {
     return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 });
   }
 
-  const { accountId, campaignIds, startDate, endDate } = await request.json();
+  const body = await request.json();
+  const { accountId, campaignIds, startDate, endDate } = body;
 
-  // ── accountId only → return campaign list ────────────────────────────────
-  if (accountId && (!campaignIds || !campaignIds.length)) {
+  // ── accountId only → return full campaign list for that account ──────────
+  if (accountId && (!campaignIds || campaignIds.length === 0)) {
     const campaigns = [];
-    const accUrn    = encodeURIComponent(`urn:li:sponsoredAccount:${accountId}`);
     let start = 0;
     while (start < 5000) {
       const data = await liGet(
-        `https://api.linkedin.com/v2/adCampaignsV2?q=search&search.account.values[0]=${accUrn}&count=200&start=${start}`,
+        `https://api.linkedin.com/v2/adCampaignsV2?q=search` +
+        `&search.account.values[0]=urn:li:sponsoredAccount:${accountId}` +
+        `&count=200&start=${start}`,
         token.accessToken
       );
-      const els = data?.elements || [];
+      if (!data) break;
+      const els = data.elements || [];
       for (const c of els) {
         campaigns.push({
           id:     String(c.id),
@@ -91,27 +89,28 @@ export async function POST(request) {
       start += 200;
     }
     campaigns.sort((a, b) => a.name.localeCompare(b.name));
-    return Response.json({ campaigns });
+    return Response.json({ campaigns, total: campaigns.length });
   }
 
-  // ── campaignIds + dates → stream daily analytics ──────────────────────────
+  // ── campaignIds + dates → stream daily analytics ─────────────────────────
   if (!campaignIds?.length || !startDate || !endDate) {
-    return new Response(JSON.stringify({ error: 'campaignIds, startDate and endDate required' }), { status: 400 });
+    return new Response(
+      JSON.stringify({ error: 'campaignIds, startDate and endDate required' }),
+      { status: 400 }
+    );
   }
 
   const startDt = new Date(startDate);
   const endDt   = new Date(endDate);
   const clEnd   = endDt > new Date() ? new Date() : endDt;
 
-  // Build date range query params
-  const drParams = [
-    `dateRange.start.year=${startDt.getFullYear()}`,
-    `dateRange.start.month=${startDt.getMonth() + 1}`,
-    `dateRange.start.day=${startDt.getDate()}`,
-    `dateRange.end.year=${clEnd.getFullYear()}`,
-    `dateRange.end.month=${clEnd.getMonth() + 1}`,
-    `dateRange.end.day=${clEnd.getDate()}`,
-  ].join('&');
+  const drStr =
+    `dateRange.start.year=${startDt.getFullYear()}` +
+    `&dateRange.start.month=${startDt.getMonth() + 1}` +
+    `&dateRange.start.day=${startDt.getDate()}` +
+    `&dateRange.end.year=${clEnd.getFullYear()}` +
+    `&dateRange.end.month=${clEnd.getMonth() + 1}` +
+    `&dateRange.end.day=${clEnd.getDate()}`;
 
   const encoder = new TextEncoder();
   const stream  = new ReadableStream({
@@ -126,52 +125,21 @@ export async function POST(request) {
 
         send({
           pct: 5,
-          message: `Fetching daily data for ${campaignIds.length} campaign${campaignIds.length !== 1 ? 's' : ''}…`,
+          message: `Fetching data for ${campaignIds.length} campaign${campaignIds.length !== 1 ? 's' : ''}…`,
           total: campaignIds.length,
         });
 
         for (const camp of campaignIds) {
-          // ── A: Get creative name(s) for this campaign ─────────────────────
-          let creativeName = '';
-          try {
-            const crData = await liGet(
-              `https://api.linkedin.com/v2/adCreativesV2?q=search&search.campaign.values[0]=urn:li:sponsoredCampaign:${camp.id}&count=50`,
-              token.accessToken
-            );
-            const firstCr = crData?.elements?.[0];
-            if (firstCr) {
-              creativeName = firstCr.name
-                || firstCr.reference?.split(':').pop()
-                || `Creative ${firstCr.id}`;
-            }
-          } catch {}
-
-          // ── B: Daily analytics — CAMPAIGN pivot, no fields param ─────────
-          // Omitting 'fields' returns all available fields for the account type.
-          // This is the most reliable approach across API versions.
-          const analyticsUrl =
+          const url =
             `https://api.linkedin.com/v2/adAnalyticsV2` +
             `?q=analytics` +
             `&pivot=CAMPAIGN` +
             `&timeGranularity=DAILY` +
-            `&${drParams}` +
+            `&${drStr}` +
             `&campaigns[0]=urn:li:sponsoredCampaign:${camp.id}`;
 
-          const data = await liGet(analyticsUrl, token.accessToken);
-
-          if (!data) {
-            // API call failed — log and continue, don't block other campaigns
-            console.error(`Analytics failed for campaign ${camp.id}`);
-            processed++;
-            send({
-              pct: 5 + Math.round((processed / campaignIds.length) * 93),
-              message: `${processed}/${campaignIds.length} campaigns…`,
-              processed, total: campaignIds.length, rowsSoFar: allRows.length,
-            });
-            continue;
-          }
-
-          const elements = data.elements || [];
+          const data = await liGet(url, token.accessToken);
+          const elements = data?.elements || [];
 
           for (const el of elements) {
             const dr      = el.dateRange?.start;
@@ -179,25 +147,25 @@ export async function POST(request) {
               ? `${pad2(dr.month)}/${pad2(dr.day)}/${dr.year}`
               : toMMDDYYYY(startDate);
 
-            const spend  = parseFloat(el.costInLocalCurrency              ?? 0);
-            const imps   = parseInt  (el.impressions                       ?? 0);
-            const clks   = parseInt  (el.clicks                            ?? 0);
-            const engs   = el.totalEngagements              != null ? parseInt(el.totalEngagements)              : null;
-            const views  = el.videoViews                    != null ? parseInt(el.videoViews)                    : null;
-            const starts = el.videoStarts                   != null ? parseInt(el.videoStarts)                   : null;
-            const comps  = el.videoCompletions              != null ? parseInt(el.videoCompletions)              : null;
+            const spend  = parseFloat(el.costInLocalCurrency ?? 0);
+            const imps   = parseInt(el.impressions  ?? 0);
+            const clks   = parseInt(el.clicks       ?? 0);
+            const engs   = el.totalEngagements  != null ? parseInt(el.totalEngagements)  : null;
+            const views  = el.videoViews        != null ? parseInt(el.videoViews)        : null;
+            const starts = el.videoStarts       != null ? parseInt(el.videoStarts)       : null;
+            const comps  = el.videoCompletions  != null ? parseInt(el.videoCompletions)  : null;
             const v3sec  = el.videoThruPlayActions          != null ? parseInt(el.videoThruPlayActions)          : null;
             const v25    = el.videoFirstQuartileCompletions != null ? parseInt(el.videoFirstQuartileCompletions) : null;
             const v50    = el.videoMidpointCompletions      != null ? parseInt(el.videoMidpointCompletions)      : null;
             const v75    = el.videoThirdQuartileCompletions != null ? parseInt(el.videoThirdQuartileCompletions) : null;
-            const appDl  = el.mobileAppInstall              != null ? parseInt(el.mobileAppInstall)              : null;
+            const appDl  = el.mobileAppInstall  != null ? parseInt(el.mobileAppInstall)  : null;
             const vcr    = (starts && comps != null) ? parseFloat((comps / starts).toFixed(4)) : null;
             const cpm    = imps > 0 ? parseFloat(((spend / imps) * 1000).toFixed(4)) : 0;
 
             allRows.push({
               date: dateStr, currency: 'USD', siteName: 'LinkedIn',
               campaignName: camp.name, placementName: camp.name,
-              packageName: '', creativeName,
+              packageName: '', creativeName: '',
               netSpend: spend, impressions: imps, clicks: clks,
               engagements: engs, videoViews: views, videoStarts: starts,
               video3sec: v3sec, video25: v25, video50: v50, video75: v75,
@@ -209,12 +177,11 @@ export async function POST(request) {
           processed++;
           send({
             pct: 5 + Math.round((processed / campaignIds.length) * 93),
-            message: `${processed}/${campaignIds.length} campaigns processed…`,
+            message: `${processed} / ${campaignIds.length} campaigns…`,
             processed, total: campaignIds.length, rowsSoFar: allRows.length,
           });
         }
 
-        // Sort by date → campaign name
         allRows.sort((a, b) => {
           const toD = s => { const [m, d, y] = s.split('/'); return new Date(`${y}-${m}-${d}`); };
           return toD(a.date) - toD(b.date) || a.campaignName.localeCompare(b.campaignName);

@@ -208,8 +208,10 @@ export default function KenyaTab() {
       const data = await res.json();
       const camps = data.campaigns || [];
       setCampaigns(camps);
-      setSelectedCamps(camps); // auto-select all
-    } catch (e) { setError('Failed to load campaigns: ' + e.message); }
+      setSelectedCamps(camps);
+    } catch (e) {
+      setError('Failed to load campaigns: ' + e.message);
+    }
     setLoadingCamps(false);
   }
 
