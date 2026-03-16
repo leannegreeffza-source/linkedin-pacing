@@ -107,14 +107,48 @@ export async function POST(request) {
         send({ pct: 5, message: `Fetching daily data for ${campaignIds.length} campaign${campaignIds.length !== 1 ? 's' : ''}…`, total: campaignIds.length });
 
         for (const camp of campaignIds) {
+          // ── Fetch at CREATIVE pivot for creative names + full video metrics ──
           const p = new URLSearchParams({
             q: 'analytics',
-            pivot: 'CAMPAIGN',
+            pivot: 'CREATIVE',
             timeGranularity: 'DAILY',
             ...dp,
-            fields: 'dateRange,costInLocalCurrency,impressions,clicks,videoViews,videoCompletions,videoStarts,totalEngagements',
+            fields: [
+              'dateRange',
+              'costInLocalCurrency',
+              'impressions',
+              'clicks',
+              'totalEngagements',
+              'videoViews',
+              'videoStarts',
+              'videoCompletions',
+              'videoThruPlayActions',          // 3-second views
+              'videoFirstQuartileCompletions', // 25%
+              'videoMidpointCompletions',      // 50%
+              'videoThirdQuartileCompletions', // 75%
+              'mobileAppInstall',              // app downloads
+              'pivotValues',
+            ].join(','),
           });
           p.append('campaigns[0]', `urn:li:sponsoredCampaign:${camp.id}`);
+
+          // Collect creative metadata (name) for all creatives in this campaign
+          const creativeNames = {};
+          try {
+            const crData = await liGet(
+              `https://api.linkedin.com/v2/adCreativesV2?q=search&search.campaign.values[0]=urn:li:sponsoredCampaign:${camp.id}&count=100`,
+              token.accessToken
+            );
+            (crData?.elements || []).forEach(cr => {
+              const crId = String(cr.id);
+              // Creative name: use reference name, or variables title, or fallback
+              const name = cr.name
+                || cr.variables?.data?.['com.linkedin.ads.SponsoredUpdateCreativeVariables']?.activity?.split(':').pop()
+                || cr.reference?.split(':').pop()
+                || `Creative ${crId}`;
+              creativeNames[crId] = name;
+            });
+          } catch {}
 
           const data = await liGet(
             `https://api.linkedin.com/v2/adAnalyticsV2?${p.toString()}`,
@@ -129,28 +163,45 @@ export async function POST(request) {
               const dateStr = dr
                 ? `${pad2(dr.month)}/${pad2(dr.day)}/${dr.year}`
                 : toMMDDYYYY(startDate);
-              const spend  = parseFloat(el.costInLocalCurrency || 0);
-              const imps   = parseInt(el.impressions  || 0);
-              const clks   = parseInt(el.clicks       || 0);
-              const views  = el.videoViews        != null ? parseInt(el.videoViews)        : null;
-              const starts = el.videoStarts       != null ? parseInt(el.videoStarts)       : null;
-              const comps  = el.videoCompletions  != null ? parseInt(el.videoCompletions)  : null;
-              const engs   = el.totalEngagements  != null ? parseInt(el.totalEngagements)  : null;
-              const cpm    = imps > 0 ? parseFloat(((spend / imps) * 1000).toFixed(4)) : 0;
+
+              // Extract creative ID from pivotValues
+              const creativeUrn  = el.pivotValues?.[0] || '';
+              const creativeId   = creativeUrn.split(':').pop();
+              const creativeName = creativeNames[creativeId] || creativeUrn || '';
+
+              const spend  = parseFloat(el.costInLocalCurrency              || 0);
+              const imps   = parseInt(el.impressions                         || 0);
+              const clks   = parseInt(el.clicks                              || 0);
+              const engs   = el.totalEngagements  != null ? parseInt(el.totalEngagements)              : null;
+              const views  = el.videoViews        != null ? parseInt(el.videoViews)                    : null;
+              const starts = el.videoStarts       != null ? parseInt(el.videoStarts)                   : null;
+              const comps  = el.videoCompletions  != null ? parseInt(el.videoCompletions)              : null;
+              const v3sec  = el.videoThruPlayActions          != null ? parseInt(el.videoThruPlayActions)          : null;
+              const v25    = el.videoFirstQuartileCompletions != null ? parseInt(el.videoFirstQuartileCompletions) : null;
+              const v50    = el.videoMidpointCompletions      != null ? parseInt(el.videoMidpointCompletions)      : null;
+              const v75    = el.videoThirdQuartileCompletions != null ? parseInt(el.videoThirdQuartileCompletions) : null;
+              const appDl  = el.mobileAppInstall  != null ? parseInt(el.mobileAppInstall)              : null;
+
+              // VCR = video completions / video starts (when both available)
+              const vcr = (starts != null && starts > 0 && comps != null)
+                ? parseFloat((comps / starts).toFixed(4))
+                : null;
+
+              const cpm = imps > 0 ? parseFloat(((spend / imps) * 1000).toFixed(4)) : 0;
 
               allRows.push({
                 date: dateStr, currency: 'USD', siteName: 'LinkedIn',
                 campaignName: camp.name, placementName: camp.name,
-                packageName: '', creativeName: '',
+                packageName: '', creativeName,
                 netSpend: spend, impressions: imps, clicks: clks,
                 engagements: engs, videoViews: views, videoStarts: starts,
-                video3sec: null, video25: null, video50: null, video75: null,
-                video100: comps, vcr: null, appDownloads: null,
+                video3sec: v3sec, video25: v25, video50: v50, video75: v75,
+                video100: comps, vcr, appDownloads: appDl,
                 custom1: null, custom2: null, cpm,
               });
             }
           }
-          // Campaigns with no data in the period are simply omitted (not zero-padded)
+          // Campaigns with no data in the period are omitted
 
           processed++;
           send({
