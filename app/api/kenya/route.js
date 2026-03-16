@@ -3,98 +3,81 @@ import { getToken } from 'next-auth/jwt';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-const LI = (t) => ({
-  Authorization: `Bearer ${t}`,
-  'LinkedIn-Version': '202401',
-});
-
-// Kenya master list — these are Diageo taxonomy names, NOT LinkedIn campaign IDs
-const KENYA_CAMPAIGNS = [
-  { campaign: '26006368_POR AMOR_DOJUO_DONJUB_REG_KEN_EAST_AFRIC_USD_AWA_AO_07-18-2025_09-30-2025_4801522823',       placement: '26006368_DEGE_26Q1DOJUOB_DOJUO_DONJUB_LIN_LKDN_KEN_AWA_PSOC_SOCAD_MIXD_CPM_NU_26174525_NU_ALNOG_A18+_CXD_EN_NU_AO_NU_NU_REG_NU_RON' },
-  { campaign: '26006371_Single Moment_THSG_THESIN_NAT_KEN_EAST_AFRIC_USD_AWA_AO_07-01-2025_09-30-2025_4801522825',   placement: '26006371_DEGE_26Q1THSGB_THSG_THESIN_LIN_LKDN_KEN_AWA_PSOC_SOCAD_MIXD_CPM_NU_26174616_NU_ALNOG_A18+_CXD_EN_NU_AO_NU_NU_NAT_NU_RON' },
-  { campaign: '26006374_Whitecap Lager_WHICA_WHICAP_NAT_KEN_EAST_AFRIC_USD_AWA_AO_07-01-2025_10-20-2025_4801520041', placement: '26006374_DEGE_26Q1WHICALAGB_WHICA_WHICAP_LIN_LKDN_KEN_AWA_PSOC_SOCAD_MIXD_CPM_NU_26174481_MIXED_ALNOG_A18+_CXD_EN_NU_AO_NU_NU_NAT_NU_RON' },
-  { campaign: '26006382_Stay Crisp_WHICA_WHICRI_NAT_KEN_EAST_AFRIC_USD_AWA_AO_07-02-2025_09-30-2025_4801520204',     placement: '26006382_DEGE_26Q1WHICACRISB_WHICA_WHICRI_LIN_LKDN_KEN_AWA_PSOC_SOCAD_MIXD_CPM_NU_26174532_MIXED_ALNOG_A18+_CXD_EN_NU_AO_NU_NU_NAT_NU_RON' },
-  { campaign: '26006393_Keep Walking_JWLKR_JWBLAB_LOC_KEN_EAST_AFRIC_USD_AWA_AO_07-24-2025_10-17-2025_4801527504',   placement: '26006393_DEGE_26Q1JWLKRBLACKB_JWLKR_JWBLAB_LIN_LKDN_KEN_AWA_PSOC_SOCAD_MIXD_CPM_NU_26175964_NU_ALNOG_A18+_CXD_EN_NU_AO_NU_NU_LOC_NU_RON' },
-  { campaign: '26006407_Showtime_TANQY_TANQUB_NAT_KEN_EAST_AFRIC_USD_AWA_AO_07-22-2025_09-30-2025_4801525080',       placement: '26006407_DEGE_26Q1TANQYSTB_TANQY_TANQUB_LIN_LKDN_KEN_AWA_PSOC_SOCAD_MIXD_CPM_NU_26175366_MIXED_ALNOG_A18+_CXD_EN_NU_AO_NU_NU_NAT_NU_RON' },
-  { campaign: '26007504_Keep Walking_JWLKR_JWBLAB_LOC_KEN_EAST_AFRIC_USD_AWA_AO_10-13-2025_12-31-2025_4801581614',   placement: '26007504_DEGE_26Q2JWLKRBLKB_JWLKR_JWBLAB_LIN_LKDN_KEN_AWA_PSOC_SOCAD_MIXD_CPM_NU_26195941_NU_ALNOG_A18+_CXD_EN_NU_AO_NU_NU_LOC_NU_RON' },
-  { campaign: '26007528_Stay Crisp_WHICA_WHICRI_NAT_KEN_EAST_AFRIC_USD_AWA_AO_10-09-2025_12-31-2025_4801581610',     placement: '26007528_DEGE_26Q2WHICACRISB_WHICA_WHICRI_LIN_LKDN_KEN_AWA_PSOC_SOCAD_MIXD_CPM_NU_26196462_MIXED_ALNOG_A18+_CXD_EN_NU_DV_NAT_NU_RON' },
-  { campaign: '26007540_POR AMOR_DOJUO_DONJUB_NAT_KEN_EAST_AFRIC_USD_AWA_AO_10-15-2025_12-31-2025_ 4801585107',      placement: '26007540_DEGE_26Q2DOJUOB_DOJUO_DONJUB_LIN_LKDN_KEN_AWA_PSOC_SOCAD_MIXD_CPM_NU_26197222_NU_ALNOG_A18+_CXD_EN_NU_AO_NU_NU_NAT_NU_RON' },
-  { campaign: '26007614_Whitecap Lager_WHICA_WHICAP_NAT_KEN_EAST_AFRIC_USD_AWA_AO_10-23-2025_01-15-2026_4801589158', placement: '26007614_DEGE_26Q2WHICALAGB_WHICA_WHICAP_LIN_LKDN_KEN_AWA_PSOC_SOCAD_MIXD_CPM_NU_26199156_MIXED_ALNOG_A18+_CXD_EN_NU_AO_NU_NU_NAT_NU_RON' },
-  { campaign: '26007619_Single Moment_THSG_THESIN_NAT_KEN_EAST_AFRIC_USD_AWA_AO_10-23-2025_12-31-2025_4801589064',   placement: '26007619_DEGE_26Q2THSGB_THSG_THESIN_LIN_LKDN_KEN_AWA_PSOC_SOCAD_MIXD_CPM_NU_26199684_MIXED_ALNOG_A18+_CXD_EN_NU_AO_NU_NU_NAT_NU_RON' },
-  { campaign: '26008480_Whitecap Lager_WHICA_WHICAP_NAT_KEN_EAST_AFRIC_USD_AWA_AO_01-05-2026_03-31-2026_4801634798', placement: '26008480_DEGE_26Q3WHICALAGB_WHICA_WHICAP_LIN_LKDN_KEN_AWA_PSOC_SOCAD_MIXD_CPM_NU_26235169_NU_ALNOG_A25+_CXD_EN_NU_AO_NU_NU_NAT_NU_RON' },
-  { campaign: '26008504_Single Moment_THSG_THESIN_NAT_KEN_EAST_AFRIC_USD_AWA_AO_01-08-2026_03-31-2026_4801637218',   placement: '26008504_DEGE_26Q3THSGB_THSG_THESIN_LIN_LKDN_KEN_AWA_PSOC_SOCAD_MIXD_CPM_NU_26235973_MIXED_ALNOG_A18+_CXD_EN_NU_DV_NAT_NU_RON' },
-  { campaign: '26008518_Keep Walking_JWLKR_JWBLAB_NAT_KEN_EAST_AFRIC_USD_AWA_AO_01-09-2026_03-31-2026_4801638225',   placement: '26008518_DEGE_26Q3JWLKRBLCKB_JWLKR_JWBLAB_LIN_LKDN_KEN_AWA_PSOC_SOCAD_MIXD_CPM_NU_26236942_NU_ALNOG_A18+_CXD_EN_NU_AO_NU_NU_NAT_NU_RON' },
-  { campaign: '26008552_POR AMOR_DOJUO_DONJUB_NAT_KEN_EAST_AFRIC_USD_AWA_AO_01-16-2026_03-31-2026_4801640009',       placement: '26008552_DEGE_26Q3DOJUOB_DOJUO_DONJUB_LIN_LKDN_KEN_AWA_PSOC_SOCAD_VIDE_CPM_NU_26239386_NU_ALNOG_A21-55_CXD_EN_NU_AO_NU_NU_NAT_NU_RON' },
-];
-
-// Build lookup set for fast name matching
-const KENYA_NAME_SET = new Set(KENYA_CAMPAIGNS.map(k => k.campaign.trim()));
+const LI = (t) => ({ Authorization: `Bearer ${t}`, 'LinkedIn-Version': '202401' });
 
 function pad2(n) { return String(n).padStart(2, '0'); }
-function toMMDDYYYY(str) { const [y,m,d] = str.split('-'); return `${m}/${d}/${y}`; }
+function toMMDDYYYY(str) { const [y, m, d] = str.split('-'); return `${m}/${d}/${y}`; }
 
 async function liGet(url, token) {
   try {
     const res = await fetch(url, { headers: LI(token), signal: AbortSignal.timeout(20000) });
-    if (!res.ok) { console.error(`liGet ${res.status}: ${url.slice(0,120)}`); return null; }
+    if (!res.ok) { console.error(`liGet ${res.status}: ${url.slice(0, 120)}`); return null; }
     return res.json();
   } catch (e) { console.error(`liGet err: ${e.message}`); return null; }
 }
 
-// Get all account IDs for the signed-in user (paginated)
-async function fetchAllAccountIds(token) {
-  const ids = [];
+// ── GET: return all accounts for the signed-in user ──────────────────────────
+export async function GET(request) {
+  const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
+  if (!token?.accessToken) {
+    return Response.json({ error: 'Not authenticated' }, { status: 401 });
+  }
+
+  const accounts = [];
   let start = 0;
-  while (start < 5000) {
+  while (start < 10000) {
     const data = await liGet(
       `https://api.linkedin.com/v2/adAccountsV2?q=search&count=100&start=${start}`,
-      token
+      token.accessToken
     );
     const els = data?.elements || [];
     for (const a of els) {
-      const id = a.id ? String(a.id) : (a.reference?.split(':').pop() ?? '');
-      if (id) ids.push(id);
+      const id   = a.id ? String(a.id) : (a.reference?.split(':').pop() ?? '');
+      const name = a.name || `Account ${id}`;
+      if (id) accounts.push({ id, name, status: a.status || '' });
     }
     if (els.length < 100) break;
     if (data?.paging?.total != null && start + 100 >= data.paging.total) break;
     start += 100;
   }
-  return [...new Set(ids)];
+
+  accounts.sort((a, b) => a.name.localeCompare(b.name));
+  return Response.json(accounts);
 }
 
-// Scan one account for campaigns whose names match the Kenya list
-async function scanAccountForKenyaCampaigns(accountId, token) {
-  const found = [];
-  let start = 0;
-  while (start < 2000) {
-    const accUrn = encodeURIComponent(`urn:li:sponsoredAccount:${accountId}`);
-    const data   = await liGet(
-      `https://api.linkedin.com/v2/adCampaignsV2?q=search&search.account.values[0]=${accUrn}&count=200&start=${start}`,
-      token
-    );
-    const els = data?.elements || [];
-    for (const camp of els) {
-      const name = (camp.name || '').trim();
-      if (KENYA_NAME_SET.has(name)) {
-        const kc = KENYA_CAMPAIGNS.find(k => k.campaign.trim() === name);
-        if (kc) found.push({ linkedInId: String(camp.id), campaignName: kc.campaign, placement: kc.placement });
-      }
-    }
-    if (els.length < 200) break;
-    start += 200;
-  }
-  return found;
-}
-
+// ── POST: fetch all campaigns for an account, then daily analytics ───────────
 export async function POST(request) {
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
   if (!token?.accessToken) {
     return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 });
   }
 
-  const { startDate, endDate } = await request.json();
-  if (!startDate || !endDate) {
-    return new Response(JSON.stringify({ error: 'startDate and endDate required' }), { status: 400 });
+  const { accountId, campaignIds, startDate, endDate } = await request.json();
+
+  // ── If only accountId given (no campaignIds) → return campaign list ─────────
+  if (accountId && (!campaignIds || !campaignIds.length)) {
+    const campaigns = [];
+    const accUrn = encodeURIComponent(`urn:li:sponsoredAccount:${accountId}`);
+    let start = 0;
+    while (start < 5000) {
+      const data = await liGet(
+        `https://api.linkedin.com/v2/adCampaignsV2?q=search&search.account.values[0]=${accUrn}&count=200&start=${start}`,
+        token.accessToken
+      );
+      const els = data?.elements || [];
+      for (const c of els) {
+        campaigns.push({ id: String(c.id), name: c.name || `Campaign ${c.id}`, status: c.status || '', type: c.type || '' });
+      }
+      if (els.length < 200) break;
+      start += 200;
+    }
+    campaigns.sort((a, b) => a.name.localeCompare(b.name));
+    return Response.json({ campaigns });
+  }
+
+  // ── campaignIds given → stream daily analytics ───────────────────────────────
+  if (!campaignIds?.length || !startDate || !endDate) {
+    return new Response(JSON.stringify({ error: 'campaignIds, startDate and endDate required' }), { status: 400 });
   }
 
   const start = new Date(startDate);
@@ -118,56 +101,12 @@ export async function POST(request) {
       };
 
       try {
-        // ── Phase 1: Get all accounts for this user ──────────────────────────
-        send({ phase: 1, pct: 5, message: 'Loading accounts for signed-in user…' });
-        const accountIds = await fetchAllAccountIds(token.accessToken);
-        send({ phase: 1, pct: 15, message: `Found ${accountIds.length} accounts — scanning for Kenya campaigns…` });
-
-        if (!accountIds.length) {
-          send({ done: true, rows: [], total: 0, warning: 'No ad accounts found for this LinkedIn user.' });
-          controller.close();
-          return;
-        }
-
-        // ── Phase 2: Scan accounts for Kenya campaigns (10 at a time) ─────────
-        const foundCampaigns = [];
-        const CONCURRENCY = 10;
-        for (let i = 0; i < accountIds.length; i += CONCURRENCY) {
-          const batch = accountIds.slice(i, i + CONCURRENCY);
-          const results = await Promise.all(
-            batch.map(id => scanAccountForKenyaCampaigns(id, token.accessToken))
-          );
-          results.forEach(r => foundCampaigns.push(...r));
-
-          const pct = 15 + Math.round(((i + batch.length) / accountIds.length) * 50);
-          send({
-            phase: 2, pct,
-            message: `Scanned ${Math.min(i + CONCURRENCY, accountIds.length)}/${accountIds.length} accounts — ${foundCampaigns.length} Kenya campaigns matched`,
-          });
-          // All 15 found — no need to keep scanning
-          if (foundCampaigns.length >= KENYA_CAMPAIGNS.length) break;
-        }
-
-        send({
-          phase: 2, pct: 65,
-          message: `Matched ${foundCampaigns.length}/${KENYA_CAMPAIGNS.length} Kenya campaigns. Fetching daily analytics…`,
-          foundCount: foundCampaigns.length,
-        });
-
-        if (!foundCampaigns.length) {
-          send({
-            done: true, rows: [], total: 0,
-            warning: `None of the 15 Kenya campaigns were found in your LinkedIn account for the date range ${startDate} to ${endDate}. Check that your account has access to these campaigns.`,
-          });
-          controller.close();
-          return;
-        }
-
-        // ── Phase 3: Daily analytics for each matched campaign ────────────────
         const allRows = [];
         let processed = 0;
 
-        for (const kc of foundCampaigns) {
+        send({ pct: 5, message: `Fetching daily data for ${campaignIds.length} campaign${campaignIds.length !== 1 ? 's' : ''}…`, total: campaignIds.length });
+
+        for (const camp of campaignIds) {
           const p = new URLSearchParams({
             q: 'analytics',
             pivot: 'CAMPAIGN',
@@ -175,7 +114,7 @@ export async function POST(request) {
             ...dp,
             fields: 'dateRange,costInLocalCurrency,impressions,clicks,videoViews,videoCompletions,videoStarts,totalEngagements',
           });
-          p.append('campaigns[0]', `urn:li:sponsoredCampaign:${kc.linkedInId}`);
+          p.append('campaigns[0]', `urn:li:sponsoredCampaign:${camp.id}`);
 
           const data = await liGet(
             `https://api.linkedin.com/v2/adAnalyticsV2?${p.toString()}`,
@@ -191,17 +130,17 @@ export async function POST(request) {
                 ? `${pad2(dr.month)}/${pad2(dr.day)}/${dr.year}`
                 : toMMDDYYYY(startDate);
               const spend  = parseFloat(el.costInLocalCurrency || 0);
-              const imps   = parseInt(el.impressions || 0);
-              const clks   = parseInt(el.clicks || 0);
-              const views  = el.videoViews       != null ? parseInt(el.videoViews)       : null;
-              const starts = el.videoStarts      != null ? parseInt(el.videoStarts)      : null;
-              const comps  = el.videoCompletions != null ? parseInt(el.videoCompletions) : null;
-              const engs   = el.totalEngagements != null ? parseInt(el.totalEngagements) : null;
+              const imps   = parseInt(el.impressions  || 0);
+              const clks   = parseInt(el.clicks       || 0);
+              const views  = el.videoViews        != null ? parseInt(el.videoViews)        : null;
+              const starts = el.videoStarts       != null ? parseInt(el.videoStarts)       : null;
+              const comps  = el.videoCompletions  != null ? parseInt(el.videoCompletions)  : null;
+              const engs   = el.totalEngagements  != null ? parseInt(el.totalEngagements)  : null;
               const cpm    = imps > 0 ? parseFloat(((spend / imps) * 1000).toFixed(4)) : 0;
 
               allRows.push({
                 date: dateStr, currency: 'USD', siteName: 'LinkedIn',
-                campaignName: kc.campaignName, placementName: kc.placement,
+                campaignName: camp.name, placementName: camp.name,
                 packageName: '', creativeName: '',
                 netSpend: spend, impressions: imps, clicks: clks,
                 engagements: engs, videoViews: views, videoStarts: starts,
@@ -210,46 +149,28 @@ export async function POST(request) {
                 custom1: null, custom2: null, cpm,
               });
             }
-          } else {
-            // Campaign exists but no data in this period
-            allRows.push({
-              date: toMMDDYYYY(startDate), currency: 'USD', siteName: 'LinkedIn',
-              campaignName: kc.campaignName, placementName: kc.placement,
-              packageName: '', creativeName: '',
-              netSpend: 0, impressions: 0, clicks: 0,
-              engagements: null, videoViews: null, videoStarts: null,
-              video3sec: null, video25: null, video50: null, video75: null,
-              video100: null, vcr: null, appDownloads: null,
-              custom1: null, custom2: null, cpm: 0,
-            });
           }
+          // Campaigns with no data in the period are simply omitted (not zero-padded)
 
           processed++;
           send({
-            phase: 3,
-            pct: 65 + Math.round((processed / foundCampaigns.length) * 33),
-            message: `Analytics: ${processed}/${foundCampaigns.length} campaigns…`,
-            processed, total: foundCampaigns.length, rowsSoFar: allRows.length,
+            pct: 5 + Math.round((processed / campaignIds.length) * 93),
+            message: `${processed}/${campaignIds.length} campaigns processed…`,
+            processed, total: campaignIds.length, rowsSoFar: allRows.length,
           });
         }
 
         // Sort by date then campaign name
         allRows.sort((a, b) => {
-          const toD = s => { const [m,d,y] = s.split('/'); return new Date(`${y}-${m}-${d}`); };
+          const toD = s => { const [m, d, y] = s.split('/'); return new Date(`${y}-${m}-${d}`); };
           return toD(a.date) - toD(b.date) || a.campaignName.localeCompare(b.campaignName);
         });
 
-        send({
-          done: true, rows: allRows, total: allRows.length,
-          foundCampaigns: foundCampaigns.length,
-          missingCampaigns: KENYA_CAMPAIGNS.length - foundCampaigns.length,
-        });
-
+        send({ done: true, rows: allRows, total: allRows.length });
       } catch (err) {
-        console.error('Kenya API error:', err);
+        console.error('Kenya analytics error:', err);
         send({ error: err.message });
       }
-
       controller.close();
     },
   });

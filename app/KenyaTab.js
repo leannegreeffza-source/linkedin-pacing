@@ -1,48 +1,46 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import {
-  RefreshCw, FileSpreadsheet, Download, Calendar, AlertCircle,
-  CheckCircle2, FileDown, Table2
+  RefreshCw, FileSpreadsheet, Calendar, AlertCircle,
+  FileDown, Table2, ChevronDown, Check, Search, X,
+  Users, BarChart2
 } from 'lucide-react';
 
-// ─── Template column definitions (exact Diageo Publisher Data template order) ─
 const COLS = [
-  { key: 'date',          label: 'Date',                        w: 100 },
+  { key: 'date',          label: 'Date',                         w: 100 },
   { key: 'currency',      label: 'Currency Spend is Entered In', w: 90  },
-  { key: 'siteName',      label: 'Site Name',                   w: 100 },
-  { key: 'campaignName',  label: 'Campaign Name',               w: 400 },
-  { key: 'placementName', label: 'Placement Name',              w: 500 },
-  { key: 'packageName',   label: 'Package Name',                w: 130 },
-  { key: 'creativeName',  label: 'Creative Name',               w: 130 },
-  { key: 'netSpend',      label: 'Net Spend',                   w: 100, fmt: 'num4' },
-  { key: 'impressions',   label: 'Impressions',                 w: 110, fmt: 'int'  },
-  { key: 'clicks',        label: 'Clicks',                      w: 80,  fmt: 'int'  },
-  { key: 'engagements',   label: 'Engagements',                 w: 110, fmt: 'int'  },
-  { key: 'videoViews',    label: 'Video Views',                 w: 100, fmt: 'int'  },
-  { key: 'videoStarts',   label: 'Video Starts',                w: 100, fmt: 'int'  },
-  { key: 'video3sec',     label: 'Video 3 Sec View',            w: 120, fmt: 'int'  },
-  { key: 'video25',       label: 'Video Complete (25%)',        w: 140, fmt: 'int'  },
-  { key: 'video50',       label: 'Video Complete (50%)',        w: 140, fmt: 'int'  },
-  { key: 'video75',       label: 'Video Complete (75%)',        w: 140, fmt: 'int'  },
-  { key: 'video100',      label: 'Video Complete (100%)',       w: 150, fmt: 'int'  },
-  { key: 'vcr',           label: 'Video Completion Rate (VCR)', w: 160, fmt: 'pct'  },
-  { key: 'appDownloads',  label: 'App Downloads',               w: 120, fmt: 'int'  },
-  { key: 'custom1',       label: 'Custom Performance Metric 1', w: 180, fmt: 'int'  },
-  { key: 'custom2',       label: 'Custom Performance Metric 2', w: 180, fmt: 'int'  },
-  { key: 'cpm',           label: 'CPM',                         w: 90,  fmt: 'num4' },
+  { key: 'siteName',      label: 'Site Name',                    w: 100 },
+  { key: 'campaignName',  label: 'Campaign Name',                w: 400 },
+  { key: 'placementName', label: 'Placement Name',               w: 500 },
+  { key: 'packageName',   label: 'Package Name',                 w: 130 },
+  { key: 'creativeName',  label: 'Creative Name',                w: 130 },
+  { key: 'netSpend',      label: 'Net Spend',                    w: 110, fmt: 'num4' },
+  { key: 'impressions',   label: 'Impressions',                  w: 110, fmt: 'int'  },
+  { key: 'clicks',        label: 'Clicks',                       w: 80,  fmt: 'int'  },
+  { key: 'engagements',   label: 'Engagements',                  w: 110, fmt: 'int'  },
+  { key: 'videoViews',    label: 'Video Views',                  w: 100, fmt: 'int'  },
+  { key: 'videoStarts',   label: 'Video Starts',                 w: 100, fmt: 'int'  },
+  { key: 'video3sec',     label: 'Video 3 Sec View',             w: 120, fmt: 'int'  },
+  { key: 'video25',       label: 'Video Complete (25%)',         w: 140, fmt: 'int'  },
+  { key: 'video50',       label: 'Video Complete (50%)',         w: 140, fmt: 'int'  },
+  { key: 'video75',       label: 'Video Complete (75%)',         w: 140, fmt: 'int'  },
+  { key: 'video100',      label: 'Video Complete (100%)',        w: 150, fmt: 'int'  },
+  { key: 'vcr',           label: 'Video Completion Rate (VCR)',  w: 160, fmt: 'pct'  },
+  { key: 'appDownloads',  label: 'App Downloads',                w: 120, fmt: 'int'  },
+  { key: 'custom1',       label: 'Custom Performance Metric 1',  w: 180, fmt: 'int'  },
+  { key: 'custom2',       label: 'Custom Performance Metric 2',  w: 180, fmt: 'int'  },
+  { key: 'cpm',           label: 'CPM',                          w: 90,  fmt: 'num4' },
 ];
 
-// ─── Date helpers ─────────────────────────────────────────────────────────────
-function toYMD(d)        { return d.toISOString().split('T')[0]; }
-function todayStr()      { return toYMD(new Date()); }
-function firstOfMonth()  { const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth(), 1)); }
-function lastNDays(n)    { const d = new Date(); d.setDate(d.getDate() - n + 1); return toYMD(d); }
-function lastMonthStart(){ const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth()-1, 1)); }
-function lastMonthEnd()  { const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth(), 0)); }
+function toYMD(d)         { return d.toISOString().split('T')[0]; }
+function todayStr()       { return toYMD(new Date()); }
+function firstOfMonth()   { const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth(), 1)); }
+function lastNDays(n)     { const d = new Date(); d.setDate(d.getDate() - n + 1); return toYMD(d); }
+function lastMonthStart() { const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth()-1, 1)); }
+function lastMonthEnd()   { const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth(), 0)); }
 
-// ─── Formatters ───────────────────────────────────────────────────────────────
 function fmtCell(val, fmt) {
   if (val == null || val === '') return '';
   if (fmt === 'num4') return Number(val).toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
@@ -51,7 +49,6 @@ function fmtCell(val, fmt) {
   return String(val);
 }
 
-// ─── Load SheetJS ─────────────────────────────────────────────────────────────
 async function loadXLSX() {
   if (window.XLSX) return window.XLSX;
   return new Promise((res, rej) => {
@@ -62,21 +59,18 @@ async function loadXLSX() {
   });
 }
 
-// ─── Excel export — matches Diageo Publisher Data template exactly ─────────────
-async function exportExcel(rows, startDate, endDate) {
-  const XLSX   = await loadXLSX();
-  const today  = new Date();
-  const dateTag = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
-  const fileName = `LinkedIn_${dateTag}`;
+async function exportExcel(rows) {
+  const XLSX  = await loadXLSX();
+  const today = new Date();
+  const tag   = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
 
-  // Row 1: instructions (match template)
-  const instr = [
+  const instrRow = [
     'Data must be broken out by day (daily break down). No ranges in the Date field.\nMM/DD/YYYYY',
     'Required (Should align with the taxonomy currency code)',
     'Please include your publisher or site name',
     'There should be no extra white spaces in campaign and placement name. Please use our taxonomy for campaign and placement name.',
     'There should be no extra white spaces in campaign and placement name. Please use our taxonomy for campaign and placement name.',
-    'If available', 'If available', 'Required', 'Required', 'If applicable',
+    'If available','If available','Required','Required','If applicable',
     'If bought on CPE/CPV, Engagements & Views MUST be provided',
     'If bought on CPE/CPV, Engagements & Views MUST be provided',
     'If bought on CPE/CPV, Engagements & Views MUST be provided',
@@ -86,30 +80,24 @@ async function exportExcel(rows, startDate, endDate) {
     'If bought on CPE/CPV, Engagements & Views MUST be provided',
     'If bought on CPE/CPV, Engagements & Views MUST be provided',
     'If bought on CPE/CPV, Engagements & Views MUST be provided',
-    'If applicable', 'If applicable', 'If applicable',
-    'Columns in Red are indicator/flag fields. Please do not edit these columns as they are formulas and help spot check for variances in taxonomy.',
+    'If applicable','If applicable','If applicable',
+    'Columns in Red are indicator/flag fields.',
     null, null, null,
   ];
 
-  // Row 2: column headers
-  const headers = COLS.map(c => c.label);
+  const ws = XLSX.utils.aoa_to_sheet([
+    instrRow,
+    COLS.map(c => c.label),
+    ...rows.map(r => COLS.map(col => {
+      const v = r[col.key];
+      if (v == null) return null;
+      if (col.fmt === 'num4' || col.fmt === 'int') return typeof v === 'number' ? v : parseFloat(v) || 0;
+      return v;
+    })),
+  ]);
+  ws['!cols'] = COLS.map(c => ({ wch: Math.round(c.w / 6) }));
 
-  // Data rows
-  const dataRows = rows.map(r => COLS.map(col => {
-    const v = r[col.key];
-    if (v == null) return null;
-    if (col.fmt === 'num4' || col.fmt === 'int') return typeof v === 'number' ? v : parseFloat(v) || 0;
-    if (col.fmt === 'pct') return v;
-    return v;
-  }));
-
-  const wsData = [instr, headers, ...dataRows];
-  const ws     = XLSX.utils.aoa_to_sheet(wsData);
-  ws['!cols']  = COLS.map(c => ({ wch: Math.round(c.w / 6) }));
-
-  // Format header row (row index 1 = second row)
-  const range = XLSX.utils.decode_range(ws['!ref']);
-  COLS.forEach((col, C) => {
+  COLS.forEach((_, C) => {
     const addr = XLSX.utils.encode_cell({ r: 1, c: C });
     if (!ws[addr]) return;
     ws[addr].s = {
@@ -119,7 +107,7 @@ async function exportExcel(rows, startDate, endDate) {
     };
   });
 
-  // Format data cells
+  const range = XLSX.utils.decode_range(ws['!ref']);
   for (let R = 2; R <= range.e.r; R++) {
     COLS.forEach((col, C) => {
       const addr = XLSX.utils.encode_cell({ r: R, c: C });
@@ -132,41 +120,23 @@ async function exportExcel(rows, startDate, endDate) {
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Data Capture');
-  XLSX.writeFile(wb, `${fileName}.xlsx`);
+  XLSX.writeFile(wb, `LinkedIn_${tag}.xlsx`);
 }
 
-// ─── CSV export ───────────────────────────────────────────────────────────────
-function exportCSV(rows, startDate, endDate) {
-  const today  = new Date();
-  const dateTag = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
-  const fileName = `LinkedIn_${dateTag}.csv`;
-
-  const escape = (v) => {
-    if (v == null) return '';
-    const s = String(v);
-    return s.includes(',') || s.includes('"') || s.includes('\n')
-      ? `"${s.replace(/"/g, '""')}"`
-      : s;
-  };
-
+function exportCSV(rows) {
+  const today = new Date();
+  const tag   = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+  const esc   = v => { if (v == null) return ''; const s = String(v); return (s.includes(',') || s.includes('"')) ? `"${s.replace(/"/g,'""')}"` : s; };
   const lines = [
-    COLS.map(c => escape(c.label)).join(','),
-    ...rows.map(r => COLS.map(col => {
-      const v = r[col.key];
-      if (v == null) return '';
-      if (col.fmt === 'pct') return (Number(v) * 100).toFixed(2) + '%';
-      return escape(v);
-    }).join(',')),
+    COLS.map(c => esc(c.label)).join(','),
+    ...rows.map(r => COLS.map(col => { const v = r[col.key]; if (v == null) return ''; if (col.fmt === 'pct') return (Number(v)*100).toFixed(2)+'%'; return esc(v); }).join(',')),
   ];
-
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url; a.download = fileName; a.click();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `LinkedIn_${tag}.csv`; a.click();
   URL.revokeObjectURL(url);
 }
 
-// ─── Summary stats ────────────────────────────────────────────────────────────
 function computeTotals(rows) {
   return rows.reduce((t, r) => ({
     netSpend:    t.netSpend    + (r.netSpend    || 0),
@@ -177,18 +147,118 @@ function computeTotals(rows) {
   }), { netSpend: 0, impressions: 0, clicks: 0, videoViews: 0, video100: 0 });
 }
 
-// ─── Main KenyaTab ────────────────────────────────────────────────────────────
 export default function KenyaTab() {
   const { data: session } = useSession();
 
+  const [accounts,     setAccounts]     = useState([]);
+  const [loadingAccts, setLoadingAccts] = useState(false);
+  const [selectedAcct, setSelectedAcct] = useState(null);
+  const [showAcctMenu, setShowAcctMenu] = useState(false);
+  const [acctSearch,   setAcctSearch]   = useState('');
+
+  const [campaigns,    setCampaigns]    = useState([]);
+  const [loadingCamps, setLoadingCamps] = useState(false);
+  const [selectedCamps,setSelectedCamps]= useState([]);
+  const [showCampMenu, setShowCampMenu] = useState(false);
+  const [campSearch,   setCampSearch]   = useState('');
+
   const [startDate, setStartDate] = useState(firstOfMonth);
   const [endDate,   setEndDate]   = useState(todayStr);
-  const [rows,      setRows]      = useState([]);
-  const [loading,   setLoading]   = useState(false);
-  const [error,     setError]     = useState('');
+
+  const [rows,        setRows]        = useState([]);
+  const [loading,     setLoading]     = useState(false);
+  const [error,       setError]       = useState('');
+  const [warning,     setWarning]     = useState('');
   const [lastRefresh, setLastRefresh] = useState(null);
-  const [progress, setProgress]   = useState({ pct: 0, processed: 0, total: 0, rowsSoFar: 0, message: '' });
-  const [search,   setSearch]     = useState('');
+  const [progress,    setProgress]    = useState({ pct: 0, message: '', processed: 0, total: 0, rowsSoFar: 0 });
+  const [tableSearch, setTableSearch] = useState('');
+
+  const acctMenuRef = useRef();
+  const campMenuRef = useRef();
+
+  useEffect(() => {
+    function h(e) {
+      if (acctMenuRef.current && !acctMenuRef.current.contains(e.target)) setShowAcctMenu(false);
+      if (campMenuRef.current && !campMenuRef.current.contains(e.target)) setShowCampMenu(false);
+    }
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    setLoadingAccts(true);
+    fetch('/api/kenya')
+      .then(r => r.json())
+      .then(data => { setAccounts(Array.isArray(data) ? data : []); setLoadingAccts(false); })
+      .catch(() => setLoadingAccts(false));
+  }, [session]);
+
+  async function selectAccount(acct) {
+    setSelectedAcct(acct); setShowAcctMenu(false);
+    setSelectedCamps([]); setCampaigns([]); setRows([]); setError(''); setWarning('');
+    if (!acct) return;
+    setLoadingCamps(true);
+    try {
+      const res  = await fetch('/api/kenya', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId: acct.id }),
+      });
+      const data = await res.json();
+      const camps = data.campaigns || [];
+      setCampaigns(camps);
+      setSelectedCamps(camps); // auto-select all
+    } catch (e) { setError('Failed to load campaigns: ' + e.message); }
+    setLoadingCamps(false);
+  }
+
+  function toggleCampaign(camp) {
+    setSelectedCamps(prev =>
+      prev.find(c => c.id === camp.id) ? prev.filter(c => c.id !== camp.id) : [...prev, camp]
+    );
+  }
+
+  async function fetchData() {
+    if (!selectedCamps.length) { setError('Select at least one campaign.'); return; }
+    setLoading(true); setError(''); setWarning('');
+    setProgress({ pct: 0, message: `Fetching ${selectedCamps.length} campaign${selectedCamps.length !== 1 ? 's' : ''}…`, processed: 0, total: selectedCamps.length, rowsSoFar: 0 });
+
+    try {
+      const res = await fetch('/api/kenya', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountId:   selectedAcct.id,
+          campaignIds: selectedCamps.map(c => ({ id: c.id, name: c.name })),
+          startDate, endDate,
+        }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `HTTP ${res.status}`); }
+
+      const reader = res.body.getReader(), decoder = new TextDecoder();
+      let buffer = '', finalRows = null;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n'); buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.error) throw new Error(msg.error);
+            if (msg.pct != null || msg.message) setProgress(p => ({ pct: msg.pct ?? p.pct, message: msg.message ?? p.message, processed: msg.processed ?? p.processed, total: msg.total ?? p.total, rowsSoFar: msg.rowsSoFar ?? p.rowsSoFar }));
+            if (msg.done && Array.isArray(msg.rows)) { finalRows = msg.rows; if (msg.warning) setWarning(msg.warning); }
+          } catch (e) { if (e.message !== 'Unexpected end of JSON input') throw e; }
+        }
+      }
+      if (!finalRows) throw new Error('No data received.');
+      setRows(finalRows); setLastRefresh(new Date());
+      setProgress(p => ({ ...p, pct: 100, message: `Complete — ${finalRows.length} rows` }));
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  }
 
   const quickDates = [
     { label: 'This Month', fn: () => { setStartDate(firstOfMonth()); setEndDate(todayStr()); } },
@@ -198,151 +268,146 @@ export default function KenyaTab() {
     { label: 'Today',      fn: () => { setStartDate(todayStr()); setEndDate(todayStr()); } },
   ];
 
-  // Auto-load when session is ready
-  useEffect(() => {
-    if (session) fetchData();
-  }, [session]);
-
-  const [warning, setWarning] = useState('');
-
-  async function fetchData() {
-    if (!session) return;
-    setLoading(true); setError(''); setWarning('');
-    setProgress({ pct: 0, processed: 0, total: 15, rowsSoFar: 0, message: 'Connecting to LinkedIn…' });
-
-    try {
-      const res = await fetch('/api/kenya', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ startDate, endDate }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-
-      const reader  = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let finalRows = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop();
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const msg = JSON.parse(line);
-            if (msg.error) throw new Error(msg.error);
-
-            // All phases send pct + message directly now
-            if (msg.pct != null || msg.message) {
-              setProgress(p => ({
-                ...p,
-                pct:       msg.pct       ?? p.pct,
-                message:   msg.message   ?? p.message,
-                processed: msg.processed ?? p.processed,
-                total:     msg.total     ?? p.total,
-                rowsSoFar: msg.rowsSoFar ?? p.rowsSoFar,
-              }));
-            }
-
-            if (msg.done && Array.isArray(msg.rows)) {
-              finalRows = msg.rows;
-              if (msg.warning) setWarning(msg.warning);
-            }
-          } catch (e) {
-            if (e.message !== 'Unexpected end of JSON input') throw e;
-          }
-        }
-      }
-
-      if (!finalRows) throw new Error('Stream ended without data. Try again or check your date range.');
-      setRows(finalRows);
-      setLastRefresh(new Date());
-      setProgress(p => ({ ...p, pct: 100, message: `Complete — ${finalRows.length} rows loaded` }));
-    } catch (e) {
-      setError(e.message);
-    }
-    setLoading(false);
-  }
-
-  const filteredRows = rows.filter(r => {
-    if (!search) return true;
-    const s = search.toLowerCase();
-    return [r.campaignName, r.placementName, r.date, r.siteName]
-      .some(v => v && String(v).toLowerCase().includes(s));
-  });
-
-  const totals = computeTotals(filteredRows);
-  const ctr    = totals.impressions > 0 ? ((totals.clicks / totals.impressions) * 100).toFixed(2) : '0.00';
-  const cpm    = totals.impressions > 0 ? ((totals.netSpend / totals.impressions) * 1000).toFixed(4) : '0.0000';
+  const filteredRows  = rows.filter(r => !tableSearch || [r.campaignName, r.placementName, r.date].some(v => v && String(v).toLowerCase().includes(tableSearch.toLowerCase())));
+  const totals        = computeTotals(filteredRows);
+  const ctr           = totals.impressions > 0 ? ((totals.clicks / totals.impressions) * 100).toFixed(2) : '0.00';
+  const cpmAvg        = totals.impressions > 0 ? ((totals.netSpend / totals.impressions) * 1000).toFixed(4) : '0.0000';
+  const filteredCamps = campaigns.filter(c => !campSearch || c.name.toLowerCase().includes(campSearch.toLowerCase()));
+  const filteredAccts = accounts.filter(a => !acctSearch || a.name.toLowerCase().includes(acctSearch.toLowerCase()) || String(a.id).includes(acctSearch));
+  const today         = new Date();
+  const fileTag       = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
 
   return (
     <div className="flex flex-col h-full bg-slate-900">
 
-      {/* ══ TOOLBAR ══ */}
+      {/* TOOLBAR */}
       <div className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center gap-2 flex-wrap shrink-0">
 
-        {/* Title badge */}
         <div className="flex items-center gap-2 mr-1">
           <div className="w-2.5 h-2.5 rounded-full bg-green-400 shrink-0" />
           <span className="text-sm font-bold text-white">Kenya Publisher Data</span>
           <span className="text-xs text-slate-400 bg-slate-700 px-2 py-0.5 rounded-full">Diageo Template</span>
-          <span className="text-xs text-slate-500">LinkedIn · 15 campaigns</span>
         </div>
 
-        <div className="flex-1" />
-
-        {/* Search */}
-        <div className="relative">
-          <input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search campaign / placement…"
-            className="pl-3 pr-7 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 w-56" />
-          {search && (
-            <button onClick={() => setSearch('')} className="absolute right-2 top-1.5 text-slate-400 hover:text-white text-xs">✕</button>
+        {/* Account picker */}
+        <div className="relative" ref={acctMenuRef}>
+          <button onClick={() => setShowAcctMenu(v => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${selectedAcct ? 'bg-blue-700 border-blue-600 text-white' : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'}`}>
+            <Users className="w-3.5 h-3.5" />
+            {loadingAccts ? 'Loading…' : selectedAcct ? <span className="max-w-[180px] truncate">{selectedAcct.name}</span> : `Select Account (${accounts.length})`}
+            <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
+          </button>
+          {showAcctMenu && (
+            <div className="absolute left-0 top-9 z-40 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-80 p-3">
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Select Ad Account ({accounts.length})</p>
+              <div className="relative mb-2">
+                <Search className="absolute left-2.5 top-1.5 w-3.5 h-3.5 text-slate-400" />
+                <input value={acctSearch} onChange={e => setAcctSearch(e.target.value)} placeholder="Search…"
+                  className="w-full pl-8 pr-3 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="max-h-64 overflow-y-auto space-y-1">
+                {filteredAccts.map(a => (
+                  <div key={a.id} onClick={() => selectAccount(a)}
+                    className={`flex items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${selectedAcct?.id === a.id ? 'bg-blue-700' : 'bg-slate-700 hover:bg-slate-600'}`}>
+                    {selectedAcct?.id === a.id && <Check className="w-3.5 h-3.5 text-white shrink-0" />}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-white truncate font-medium">{a.name}</p>
+                      <p className="text-xs text-slate-400 font-mono">{a.id}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
 
-        {/* Refresh */}
-        <button onClick={fetchData} disabled={loading}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs font-medium border border-slate-600 disabled:opacity-40 transition-colors">
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
+        {/* Campaign picker */}
+        {selectedAcct && (
+          <div className="relative" ref={campMenuRef}>
+            <button onClick={() => setShowCampMenu(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${selectedCamps.length > 0 ? 'bg-emerald-700 border-emerald-600 text-white' : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'}`}>
+              <BarChart2 className="w-3.5 h-3.5" />
+              {loadingCamps ? 'Loading campaigns…' : selectedCamps.length === campaigns.length && campaigns.length > 0 ? `All ${campaigns.length} campaigns` : `${selectedCamps.length} / ${campaigns.length} campaigns`}
+              <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
+            </button>
+            {showCampMenu && (
+              <div className="absolute left-0 top-9 z-40 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-[480px] p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Campaigns ({campaigns.length})</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => setSelectedCamps([...campaigns])} className="text-xs text-blue-400 hover:text-blue-300">Select All</button>
+                    <span className="text-slate-600">·</span>
+                    <button onClick={() => setSelectedCamps([])} className="text-xs text-slate-400 hover:text-white">Clear</button>
+                  </div>
+                </div>
+                <div className="relative mb-2">
+                  <Search className="absolute left-2.5 top-1.5 w-3.5 h-3.5 text-slate-400" />
+                  <input value={campSearch} onChange={e => setCampSearch(e.target.value)} placeholder="Filter campaigns…"
+                    className="w-full pl-8 pr-3 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                </div>
+                <div className="max-h-72 overflow-y-auto space-y-1 pr-1">
+                  {filteredCamps.map(c => {
+                    const sel = !!selectedCamps.find(s => s.id === c.id);
+                    return (
+                      <div key={c.id} onClick={() => toggleCampaign(c)}
+                        className={`flex items-start gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${sel ? 'bg-emerald-900/40 border border-emerald-700/50' : 'bg-slate-700 hover:bg-slate-600'}`}>
+                        <div className={`w-4 h-4 mt-0.5 rounded shrink-0 border flex items-center justify-center ${sel ? 'bg-emerald-500 border-emerald-500' : 'border-slate-500'}`}>
+                          {sel && <Check className="w-2.5 h-2.5 text-white" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-white leading-snug break-all">{c.name}</p>
+                          <p className="text-xs text-slate-500 font-mono mt-0.5">{c.id} · {c.status}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex justify-between items-center mt-2.5 pt-2 border-t border-slate-700">
+                  <span className="text-xs text-slate-400">{selectedCamps.length} selected</span>
+                  <button onClick={() => setShowCampMenu(false)} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg">Done</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex-1" />
+
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1.5 w-3.5 h-3.5 text-slate-400" />
+          <input value={tableSearch} onChange={e => setTableSearch(e.target.value)} placeholder="Search table…"
+            className="pl-8 pr-7 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 w-44" />
+          {tableSearch && <button onClick={() => setTableSearch('')} className="absolute right-2 top-1.5 text-slate-400 hover:text-white"><X className="w-3.5 h-3.5" /></button>}
+        </div>
+
+        <button onClick={fetchData} disabled={loading || !selectedCamps.length}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold disabled:opacity-40 transition-colors">
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          {loading ? 'Fetching…' : 'Pull Data'}
         </button>
 
-        {/* Export Excel */}
-        <button disabled={filteredRows.length === 0}
-          onClick={() => exportExcel(filteredRows, startDate, endDate)}
+        <button disabled={filteredRows.length === 0} onClick={() => exportExcel(filteredRows)}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold disabled:opacity-40 transition-colors">
           <FileSpreadsheet className="w-3.5 h-3.5" /> Export Excel
         </button>
 
-        {/* Export CSV */}
-        <button disabled={filteredRows.length === 0}
-          onClick={() => exportCSV(filteredRows, startDate, endDate)}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white rounded-lg text-xs font-bold disabled:opacity-40 transition-colors">
+        <button disabled={filteredRows.length === 0} onClick={() => exportCSV(filteredRows)}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-xs font-bold disabled:opacity-40 transition-colors">
           <FileDown className="w-3.5 h-3.5" /> Export CSV
         </button>
       </div>
 
-      {/* ══ DATE BAR ══ */}
+      {/* DATE BAR */}
       <div className="bg-slate-800/60 border-b border-slate-700 px-4 py-2 flex items-center gap-3 flex-wrap shrink-0">
         <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-400">From</label>
-          <input type="date" value={startDate} max={endDate}
-            onChange={e => setStartDate(e.target.value)}
+          <input type="date" value={startDate} max={endDate} onChange={e => setStartDate(e.target.value)}
             className="px-2 py-1 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
         </div>
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-400">To</label>
-          <input type="date" value={endDate} min={startDate} max={todayStr()}
-            onChange={e => setEndDate(e.target.value)}
+          <input type="date" value={endDate} min={startDate} max={todayStr()} onChange={e => setEndDate(e.target.value)}
             className="px-2 py-1 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
@@ -353,33 +418,23 @@ export default function KenyaTab() {
             </button>
           ))}
         </div>
-        <button onClick={fetchData}
-          className="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-colors">
-          Apply
-        </button>
-        {lastRefresh && (
-          <span className="text-xs text-slate-500 ml-auto">Updated {lastRefresh.toLocaleTimeString()} · {filteredRows.length} rows</span>
-        )}
+        {lastRefresh && <span className="text-xs text-slate-500 ml-auto">Updated {lastRefresh.toLocaleTimeString()} · {filteredRows.length} rows</span>}
       </div>
 
-      {/* ══ SUMMARY BAR ══ */}
+      {/* SUMMARY */}
       {filteredRows.length > 0 && (
         <div className="bg-slate-900 border-b border-slate-700 px-4 py-1.5 flex items-center gap-5 text-xs flex-wrap shrink-0">
-          <span className="text-slate-500">Net Spend: <span className="text-emerald-400 font-bold">${totals.netSpend.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>
+          <span className="text-slate-500">Net Spend: <span className="text-emerald-400 font-bold">${totals.netSpend.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></span>
           <span className="text-slate-500">Impressions: <span className="text-sky-300 font-bold">{totals.impressions.toLocaleString()}</span></span>
           <span className="text-slate-500">Clicks: <span className="text-white font-bold">{totals.clicks.toLocaleString()}</span></span>
           <span className="text-slate-500">CTR: <span className="text-yellow-300 font-mono">{ctr}%</span></span>
-          <span className="text-slate-500">CPM: <span className="text-purple-300 font-mono">${cpm}</span></span>
+          <span className="text-slate-500">CPM: <span className="text-purple-300 font-mono">${cpmAvg}</span></span>
           {totals.videoViews > 0 && <span className="text-slate-500">Video Views: <span className="text-pink-300 font-bold">{totals.videoViews.toLocaleString()}</span></span>}
-          <span className="text-slate-500 ml-auto">
-            File name: <span className="text-slate-300 font-mono text-xs">
-              LinkedIn_{`${String(new Date().getFullYear()).slice(2)}${String(new Date().getMonth()+1).padStart(2,'0')}${String(new Date().getDate()).padStart(2,'0')}`}
-            </span>
-          </span>
+          <span className="text-slate-400 ml-auto text-xs font-mono">LinkedIn_{fileTag}.xlsx</span>
         </div>
       )}
 
-      {/* ══ WARNING BANNER ══ */}
+      {/* WARNING */}
       {warning && !loading && (
         <div className="bg-yellow-900/30 border-b border-yellow-700/50 px-4 py-2 flex items-start gap-2 shrink-0">
           <AlertCircle className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" />
@@ -387,101 +442,77 @@ export default function KenyaTab() {
         </div>
       )}
 
-      {/* ══ CONTENT ══ */}
+      {/* CONTENT */}
       <div className="flex-1 overflow-auto">
-        {loading ? (
+        {loading && (
           <div className="flex flex-col items-center justify-center h-full gap-6 px-8">
             <RefreshCw className="w-10 h-10 text-green-500 animate-spin" />
             <div className="w-full max-w-md space-y-2">
               <div className="flex justify-between text-xs text-slate-400 mb-1">
-                <span>{progress.message || 'Fetching Kenya campaign data…'}</span>
+                <span>{progress.message || 'Fetching…'}</span>
                 <span className="font-mono text-green-400">{progress.pct}%</span>
               </div>
               <div className="w-full bg-slate-700 rounded-full h-2.5 overflow-hidden">
-                <div className="h-2.5 rounded-full transition-all duration-500 bg-green-500"
-                  style={{ width: `${progress.pct}%` }} />
+                <div className="h-2.5 rounded-full transition-all duration-500 bg-green-500" style={{ width: `${progress.pct}%` }} />
               </div>
-              <div className="flex justify-between text-xs text-slate-600">
-                <span>{progress.processed}/{progress.total} campaigns</span>
-                {progress.rowsSoFar > 0 && <span>{progress.rowsSoFar} rows so far</span>}
-              </div>
+              {progress.rowsSoFar > 0 && <p className="text-xs text-slate-500 text-right">{progress.rowsSoFar} rows so far</p>}
             </div>
-            <p className="text-xs text-slate-600">{startDate} → {endDate}</p>
           </div>
+        )}
 
-        ) : error ? (
-          <div className="flex flex-col items-center justify-center h-64 gap-3">
-            <div className="flex items-center gap-2 text-red-400 bg-red-900/20 px-4 py-3 rounded-lg">
+        {!loading && error && (
+          <div className="flex items-center justify-center h-64">
+            <div className="flex items-center gap-2 text-red-400 bg-red-900/20 px-4 py-3 rounded-lg max-w-lg">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <p className="text-sm">{error}</p>
             </div>
-            <button onClick={fetchData}
-              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg">
-              Retry
-            </button>
           </div>
+        )}
 
-        ) : filteredRows.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-500">
-            <Table2 className="w-12 h-12 opacity-20" />
-            <p className="text-sm">No data for this date range</p>
-            <p className="text-xs text-center max-w-sm text-slate-600">
-              Select a date range that covers your Kenya campaigns (Jul 2025 – Mar 2026) and click Apply.
-            </p>
+        {!loading && !error && filteredRows.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full gap-4 text-slate-500 px-8">
+            <Table2 className="w-14 h-14 opacity-20" />
+            {!selectedAcct
+              ? <><p className="text-sm font-semibold text-slate-300">Select an account to get started</p><p className="text-xs text-center max-w-sm">Use <strong className="text-blue-400">Select Account</strong> to pick your LinkedIn ad account. All its campaigns will load — choose any or all, pick a date range, then click <strong className="text-blue-400">Pull Data</strong>.</p></>
+              : !selectedCamps.length
+                ? <><p className="text-sm font-semibold text-slate-300">No campaigns selected</p><p className="text-xs text-center max-w-sm">Select campaigns from the dropdown above then click Pull Data.</p></>
+                : <><p className="text-sm">No spend data for this date range</p><p className="text-xs text-center max-w-sm">Adjust the dates and click Pull Data.</p></>
+            }
           </div>
+        )}
 
-        ) : (
+        {!loading && filteredRows.length > 0 && (
           <table className="border-collapse text-xs" style={{ minWidth: 'max-content', width: '100%' }}>
             <thead>
               <tr>
                 {COLS.map(col => (
                   <th key={col.key} style={{
-                    minWidth: col.w,
-                    background: '#2e4057',
-                    color: '#fff',
+                    minWidth: col.w, background: '#2e4057', color: '#fff',
                     position: 'sticky', top: 0, zIndex: 10,
                     whiteSpace: 'nowrap', padding: '6px 8px',
                     textAlign: col.fmt ? 'right' : 'left',
-                    fontWeight: 700,
-                    borderRight: '1px solid rgba(255,255,255,0.1)',
-                    borderBottom: '2px solid rgba(0,0,0,0.4)',
-                    fontSize: 11,
-                  }}>
-                    {col.label}
-                  </th>
+                    fontWeight: 700, borderRight: '1px solid rgba(255,255,255,0.1)',
+                    borderBottom: '2px solid rgba(0,0,0,0.4)', fontSize: 11,
+                  }}>{col.label}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filteredRows.map((row, i) => (
-                <tr key={`${row.date}-${row.campaignName}-${i}`}
-                  style={{ background: i % 2 === 0 ? '#1e293b' : '#172033' }}
-                  className="hover:brightness-110">
+                <tr key={`${row.date}-${row.campaignName}-${i}`} style={{ background: i % 2 === 0 ? '#1e293b' : '#172033' }} className="hover:brightness-110">
                   {COLS.map(col => {
                     const val = row[col.key];
-                    const isNum = col.fmt && val != null && val !== '';
                     return (
-                      <td key={col.key} style={{
-                        minWidth: col.w,
-                        maxWidth: col.w + 100,
-                        padding: '4px 8px',
+                      <td key={col.key} title={val != null ? String(val) : ''} style={{
+                        minWidth: col.w, maxWidth: col.w + 100, padding: '4px 8px',
                         borderRight: '1px solid rgba(100,116,139,0.2)',
                         borderBottom: '1px solid rgba(100,116,139,0.15)',
-                        textAlign: isNum ? 'right' : 'left',
-                        color: col.key === 'netSpend' ? '#34d399'
-                             : col.key === 'impressions' ? '#7dd3fc'
-                             : col.key === 'clicks' ? '#fde68a'
-                             : col.key === 'cpm' ? '#d8b4fe'
-                             : val == null ? '#334155'
-                             : '#e2e8f0',
+                        textAlign: col.fmt ? 'right' : 'left',
+                        color: col.key==='netSpend' ? '#34d399' : col.key==='impressions' ? '#7dd3fc' : col.key==='clicks' ? '#fde68a' : col.key==='cpm' ? '#d8b4fe' : val==null ? '#334155' : '#e2e8f0',
                         fontFamily: col.fmt ? 'monospace' : 'inherit',
-                        whiteSpace: col.key === 'campaignName' || col.key === 'placementName' ? 'nowrap' : 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                      }}
-                      title={val != null ? String(val) : ''}
-                      >
-                        {val == null ? <span style={{ color: '#334155' }}>—</span> : fmtCell(val, col.fmt)}
+                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      }}>
+                        {val == null ? '—' : fmtCell(val, col.fmt)}
                       </td>
                     );
                   })}
@@ -497,16 +528,11 @@ export default function KenyaTab() {
                       minWidth: col.w, padding: '5px 8px',
                       borderRight: '1px solid rgba(100,116,139,0.3)',
                       color: showTotal ? '#34d399' : '#475569',
-                      fontWeight: showTotal ? 700 : 400,
-                      fontFamily: 'monospace',
+                      fontWeight: showTotal ? 700 : 400, fontFamily: 'monospace',
                       textAlign: col.fmt ? 'right' : 'left',
                       position: 'sticky', bottom: 0, zIndex: 5, background: '#0f172a',
                     }}>
-                      {i === 0
-                        ? `TOTAL (${filteredRows.length} rows)`
-                        : showTotal
-                          ? fmtCell(totals[col.key], col.fmt)
-                          : ''}
+                      {i === 0 ? `TOTAL (${filteredRows.length} rows)` : showTotal ? fmtCell(totals[col.key], col.fmt) : ''}
                     </td>
                   );
                 })}
