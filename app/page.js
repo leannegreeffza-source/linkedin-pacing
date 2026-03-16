@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import BODTab from './BODTab';
+import KenyaTab from './KenyaTab';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import {
   TrendingUp, TrendingDown, DollarSign, RefreshCw,
@@ -445,7 +446,7 @@ export default function PacingDashboard() {
 
   // Budget
   const [budget, setBudget] = useState({ totalUSD: '', totalZAR: '', note: '' });
-  const [activeTab, setActiveTab] = useState('pacing'); // 'pacing' | 'bod'
+  const [activeTab, setActiveTab] = useState('pacing'); // 'pacing' | 'bod' | 'kenya'
   const [showBudgetModal, setShowBudgetModal] = useState(false);
 
   // Pacing
@@ -797,6 +798,15 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                     : 'text-slate-400 hover:text-white'
                 }`}>
                 BOD Report
+              </button>
+              <button
+                onClick={() => setActiveTab('kenya')}
+                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                  activeTab === 'kenya'
+                    ? 'bg-green-600 text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}>
+                🇰🇪 Kenya
               </button>
             </div>
           </div>
@@ -1307,6 +1317,13 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
       {activeTab === 'bod' && (
         <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
           <BODTab />
+        </div>
+      )}
+
+      {/* ── Kenya Publisher Data Tab ── */}
+      {activeTab === 'kenya' && (
+        <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
+          <KenyaTab />
         </div>
       )}
 
