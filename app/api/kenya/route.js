@@ -11,15 +11,25 @@ const LI_HEADERS = (t) => ({
 function pad2(n) { return String(n).padStart(2, '0'); }
 function toMMDDYYYY(str) { const [y, m, d] = str.split('-'); return `${m}/${d}/${y}`; }
 
+let _firstAnalyticsLogged = false;
 async function liGet(url, token) {
   try {
     const res = await fetch(url, { headers: LI_HEADERS(token), signal: AbortSignal.timeout(20000) });
     if (!res.ok) {
       const body = await res.text();
-      console.error(`liGet ${res.status}: ${url.slice(0, 120)} — ${body.slice(0, 200)}`);
+      console.error(`liGet ${res.status}: ${url.slice(0, 150)} — ${body.slice(0, 300)}`);
       return null;
     }
-    return res.json();
+    const json = await res.json();
+    // Log the first analytics response so we can see what fields LinkedIn returns
+    if (!_firstAnalyticsLogged && url.includes('adAnalyticsV2')) {
+      _firstAnalyticsLogged = true;
+      const sample = json?.elements?.[0];
+      console.log('Kenya analytics first element keys:', sample ? Object.keys(sample).join(', ') : 'NO ELEMENTS');
+      console.log('Kenya analytics element count:', json?.elements?.length ?? 0);
+      if (sample) console.log('Kenya analytics sample:', JSON.stringify(sample).slice(0, 500));
+    }
+    return json;
   } catch (e) {
     console.error(`liGet exception: ${e.message}`);
     return null;
@@ -129,32 +139,13 @@ export async function POST(request) {
           total: campaignIds.length,
         });
 
-        // Fields must be listed explicitly — LinkedIn only returns
-        // impressions/clicks/spend by default. Commas must NOT be encoded,
-        // so we build the URL as a raw string (not URLSearchParams).
-        const FIELDS = [
-          'dateRange',
-          'costInLocalCurrency',
-          'impressions',
-          'clicks',
-          'totalEngagements',
-          'videoViews',
-          'videoStarts',
-          'videoCompletions',
-          'videoThruPlayActions',
-          'videoFirstQuartileCompletions',
-          'videoMidpointCompletions',
-          'videoThirdQuartileCompletions',
-          'mobileAppInstall',
-        ].join(',');
-
         for (const camp of campaignIds) {
+          // No fields= param — LinkedIn returns all available fields per campaign type
           const url =
             `https://api.linkedin.com/v2/adAnalyticsV2` +
             `?q=analytics` +
             `&pivot=CAMPAIGN` +
             `&timeGranularity=DAILY` +
-            `&fields=${FIELDS}` +
             `&${drStr}` +
             `&campaigns[0]=urn:li:sponsoredCampaign:${camp.id}`;
 
