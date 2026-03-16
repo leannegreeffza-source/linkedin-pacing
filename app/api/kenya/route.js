@@ -107,10 +107,30 @@ export async function POST(request) {
         send({ pct: 5, message: `Fetching daily data for ${campaignIds.length} campaign${campaignIds.length !== 1 ? 's' : ''}…`, total: campaignIds.length });
 
         for (const camp of campaignIds) {
-          // ── Fetch at CREATIVE pivot for creative names + full video metrics ──
+          // ── Step A: Fetch creative names for this campaign ────────────────────
+          const creativeNames = {};
+          try {
+            const crData = await liGet(
+              `https://api.linkedin.com/v2/adCreativesV2?q=search&search.campaign.values[0]=urn:li:sponsoredCampaign:${camp.id}&count=100`,
+              token.accessToken
+            );
+            (crData?.elements || []).forEach(cr => {
+              creativeNames[String(cr.id)] =
+                cr.name ||
+                cr.reference?.split(':').pop() ||
+                `Creative ${cr.id}`;
+            });
+          } catch {}
+
+          // One creative name for the campaign (use first found, or blank)
+          const campaignCreativeName = Object.values(creativeNames)[0] || '';
+
+          // ── Step B: CAMPAIGN pivot — daily spend + all metrics ────────────────
+          // Note: LinkedIn adAnalyticsV2 with CAMPAIGN pivot supports all video
+          // quartile fields in API version 202401+
           const p = new URLSearchParams({
             q: 'analytics',
-            pivot: 'CREATIVE',
+            pivot: 'CAMPAIGN',
             timeGranularity: 'DAILY',
             ...dp,
             fields: [
@@ -122,33 +142,14 @@ export async function POST(request) {
               'videoViews',
               'videoStarts',
               'videoCompletions',
-              'videoThruPlayActions',          // 3-second views
-              'videoFirstQuartileCompletions', // 25%
-              'videoMidpointCompletions',      // 50%
-              'videoThirdQuartileCompletions', // 75%
-              'mobileAppInstall',              // app downloads
-              'pivotValues',
+              'videoThruPlayActions',
+              'videoFirstQuartileCompletions',
+              'videoMidpointCompletions',
+              'videoThirdQuartileCompletions',
+              'mobileAppInstall',
             ].join(','),
           });
           p.append('campaigns[0]', `urn:li:sponsoredCampaign:${camp.id}`);
-
-          // Collect creative metadata (name) for all creatives in this campaign
-          const creativeNames = {};
-          try {
-            const crData = await liGet(
-              `https://api.linkedin.com/v2/adCreativesV2?q=search&search.campaign.values[0]=urn:li:sponsoredCampaign:${camp.id}&count=100`,
-              token.accessToken
-            );
-            (crData?.elements || []).forEach(cr => {
-              const crId = String(cr.id);
-              // Creative name: use reference name, or variables title, or fallback
-              const name = cr.name
-                || cr.variables?.data?.['com.linkedin.ads.SponsoredUpdateCreativeVariables']?.activity?.split(':').pop()
-                || cr.reference?.split(':').pop()
-                || `Creative ${crId}`;
-              creativeNames[crId] = name;
-            });
-          } catch {}
 
           const data = await liGet(
             `https://api.linkedin.com/v2/adAnalyticsV2?${p.toString()}`,
@@ -164,35 +165,26 @@ export async function POST(request) {
                 ? `${pad2(dr.month)}/${pad2(dr.day)}/${dr.year}`
                 : toMMDDYYYY(startDate);
 
-              // Extract creative ID from pivotValues
-              const creativeUrn  = el.pivotValues?.[0] || '';
-              const creativeId   = creativeUrn.split(':').pop();
-              const creativeName = creativeNames[creativeId] || creativeUrn || '';
-
-              const spend  = parseFloat(el.costInLocalCurrency              || 0);
-              const imps   = parseInt(el.impressions                         || 0);
-              const clks   = parseInt(el.clicks                              || 0);
-              const engs   = el.totalEngagements  != null ? parseInt(el.totalEngagements)              : null;
-              const views  = el.videoViews        != null ? parseInt(el.videoViews)                    : null;
-              const starts = el.videoStarts       != null ? parseInt(el.videoStarts)                   : null;
-              const comps  = el.videoCompletions  != null ? parseInt(el.videoCompletions)              : null;
+              const spend  = parseFloat(el.costInLocalCurrency || 0);
+              const imps   = parseInt(el.impressions  || 0);
+              const clks   = parseInt(el.clicks       || 0);
+              const engs   = el.totalEngagements              != null ? parseInt(el.totalEngagements)              : null;
+              const views  = el.videoViews                    != null ? parseInt(el.videoViews)                    : null;
+              const starts = el.videoStarts                   != null ? parseInt(el.videoStarts)                   : null;
+              const comps  = el.videoCompletions              != null ? parseInt(el.videoCompletions)              : null;
               const v3sec  = el.videoThruPlayActions          != null ? parseInt(el.videoThruPlayActions)          : null;
               const v25    = el.videoFirstQuartileCompletions != null ? parseInt(el.videoFirstQuartileCompletions) : null;
               const v50    = el.videoMidpointCompletions      != null ? parseInt(el.videoMidpointCompletions)      : null;
               const v75    = el.videoThirdQuartileCompletions != null ? parseInt(el.videoThirdQuartileCompletions) : null;
-              const appDl  = el.mobileAppInstall  != null ? parseInt(el.mobileAppInstall)              : null;
-
-              // VCR = video completions / video starts (when both available)
-              const vcr = (starts != null && starts > 0 && comps != null)
-                ? parseFloat((comps / starts).toFixed(4))
-                : null;
-
-              const cpm = imps > 0 ? parseFloat(((spend / imps) * 1000).toFixed(4)) : 0;
+              const appDl  = el.mobileAppInstall              != null ? parseInt(el.mobileAppInstall)              : null;
+              const vcr    = (starts != null && starts > 0 && comps != null)
+                ? parseFloat((comps / starts).toFixed(4)) : null;
+              const cpm    = imps > 0 ? parseFloat(((spend / imps) * 1000).toFixed(4)) : 0;
 
               allRows.push({
                 date: dateStr, currency: 'USD', siteName: 'LinkedIn',
                 campaignName: camp.name, placementName: camp.name,
-                packageName: '', creativeName,
+                packageName: '', creativeName: campaignCreativeName,
                 netSpend: spend, impressions: imps, clicks: clks,
                 engagements: engs, videoViews: views, videoStarts: starts,
                 video3sec: v3sec, video25: v25, video50: v50, video75: v75,
