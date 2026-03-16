@@ -11,7 +11,6 @@ const LI_HEADERS = (t) => ({
 function pad2(n) { return String(n).padStart(2, '0'); }
 function toMMDDYYYY(str) { const [y, m, d] = str.split('-'); return `${m}/${d}/${y}`; }
 
-let _firstAnalyticsLogged = false;
 async function liGet(url, token) {
   try {
     const res = await fetch(url, { headers: LI_HEADERS(token), signal: AbortSignal.timeout(20000) });
@@ -20,21 +19,20 @@ async function liGet(url, token) {
       console.error(`liGet ${res.status}: ${url.slice(0, 150)} — ${body.slice(0, 300)}`);
       return null;
     }
-    const json = await res.json();
-    // Log the first analytics response so we can see what fields LinkedIn returns
-    if (!_firstAnalyticsLogged && url.includes('adAnalyticsV2')) {
-      _firstAnalyticsLogged = true;
-      const sample = json?.elements?.[0];
-      console.log('Kenya analytics first element keys:', sample ? Object.keys(sample).join(', ') : 'NO ELEMENTS');
-      console.log('Kenya analytics element count:', json?.elements?.length ?? 0);
-      if (sample) console.log('Kenya analytics sample:', JSON.stringify(sample).slice(0, 500));
-    }
-    return json;
+    return res.json();
   } catch (e) {
     console.error(`liGet exception: ${e.message}`);
     return null;
   }
 }
+
+// Helper: LinkedIn returns money as {amount:"123.45",currencyCode:"USD"} OR plain string
+const toMoney = (v) => {
+  if (v == null) return 0;
+  if (typeof v === 'object' && v.amount != null) return parseFloat(v.amount) || 0;
+  return parseFloat(v) || 0;
+};
+const toN = (v) => v != null ? (parseInt(v) || 0) : null;
 
 // ── GET: all ad accounts for signed-in user ───────────────────────────────────
 export async function GET(request) {
@@ -74,7 +72,7 @@ export async function POST(request) {
   const body = await request.json();
   const { accountId, campaignIds, startDate, endDate } = body;
 
-  // ── accountId only → return full campaign list for that account ──────────
+  // ── accountId only → return full campaign list ───────────────────────────
   if (accountId && (!campaignIds || campaignIds.length === 0)) {
     const campaigns = [];
     let start = 0;
@@ -122,6 +120,25 @@ export async function POST(request) {
     `&dateRange.end.month=${clEnd.getMonth() + 1}` +
     `&dateRange.end.day=${clEnd.getDate()}`;
 
+  // LinkedIn adAnalyticsV2 field projection using Restli 2.0 syntax.
+  // Fields are listed in parentheses appended to the endpoint URL path.
+  // This is the correct way to request non-default fields.
+  const PROJECTION = [
+    'dateRange',
+    'costInLocalCurrency',
+    'impressions',
+    'clicks',
+    'totalEngagements',
+    'videoViews',
+    'videoStarts',
+    'videoCompletions',
+    'videoThruPlayActions',
+    'videoFirstQuartileCompletions',
+    'videoMidpointCompletions',
+    'videoThirdQuartileCompletions',
+    'mobileAppInstall',
+  ].join(',');
+
   const encoder = new TextEncoder();
   const stream  = new ReadableStream({
     async start(controller) {
@@ -140,8 +157,17 @@ export async function POST(request) {
         });
 
         for (const camp of campaignIds) {
-          // No fields= param — LinkedIn returns all available fields per campaign type
-          const url =
+          // Try with field projection first; fall back to no projection if it fails
+          const urlWithProjection =
+            `https://api.linkedin.com/v2/adAnalyticsV2` +
+            `?q=analytics` +
+            `&pivot=CAMPAIGN` +
+            `&timeGranularity=DAILY` +
+            `&${drStr}` +
+            `&campaigns[0]=urn:li:sponsoredCampaign:${camp.id}` +
+            `&fields=${PROJECTION}`;
+
+          const urlNoProjection =
             `https://api.linkedin.com/v2/adAnalyticsV2` +
             `?q=analytics` +
             `&pivot=CAMPAIGN` +
@@ -149,7 +175,13 @@ export async function POST(request) {
             `&${drStr}` +
             `&campaigns[0]=urn:li:sponsoredCampaign:${camp.id}`;
 
-          const data = await liGet(url, token.accessToken);
+          let data = await liGet(urlWithProjection, token.accessToken);
+
+          // If projection caused an empty response, fall back to no projection
+          if (!data?.elements?.length) {
+            data = await liGet(urlNoProjection, token.accessToken);
+          }
+
           const elements = data?.elements || [];
 
           for (const el of elements) {
@@ -158,37 +190,20 @@ export async function POST(request) {
               ? `${pad2(dr.month)}/${pad2(dr.day)}/${dr.year}`
               : toMMDDYYYY(startDate);
 
-            // Helper: LinkedIn sometimes returns money as {amount:"123.45",currencyCode:"USD"}
-            // and sometimes as a plain string "123.45". Handle both.
-            const toMoney = (v) => {
-              if (v == null) return 0;
-              if (typeof v === 'object' && v.amount != null) return parseFloat(v.amount) || 0;
-              return parseFloat(v) || 0;
-            };
-            // Helper: numeric fields — may be int, string, or missing
-            const toInt = (v) => v != null ? (parseInt(v) || 0) : null;
-            const toIntOrNull = (v) => v != null ? (parseInt(v) || 0) : null;
-
             const spend  = toMoney(el.costInLocalCurrency);
             const imps   = parseInt(el.impressions ?? 0) || 0;
             const clks   = parseInt(el.clicks      ?? 0) || 0;
-            const engs   = toIntOrNull(el.totalEngagements);
-            const views  = toIntOrNull(el.videoViews);
-            const starts = toIntOrNull(el.videoStarts);
-            const comps  = toIntOrNull(el.videoCompletions);
-            const v3sec  = toIntOrNull(el.videoThruPlayActions);
-            const v25    = toIntOrNull(el.videoFirstQuartileCompletions);
-            const v50    = toIntOrNull(el.videoMidpointCompletions);
-            const v75    = toIntOrNull(el.videoThirdQuartileCompletions);
-            const appDl  = toIntOrNull(el.mobileAppInstall);
+            const engs   = toN(el.totalEngagements);
+            const views  = toN(el.videoViews);
+            const starts = toN(el.videoStarts);
+            const comps  = toN(el.videoCompletions);
+            const v3sec  = toN(el.videoThruPlayActions);
+            const v25    = toN(el.videoFirstQuartileCompletions);
+            const v50    = toN(el.videoMidpointCompletions);
+            const v75    = toN(el.videoThirdQuartileCompletions);
+            const appDl  = toN(el.mobileAppInstall);
             const vcr    = (starts && comps != null) ? parseFloat((comps / starts).toFixed(4)) : null;
             const cpm    = imps > 0 ? parseFloat(((spend / imps) * 1000).toFixed(4)) : 0;
-
-            // Debug log first row of first campaign to verify field values
-            if (allRows.length === 0) {
-              console.log('Kenya first row raw el:', JSON.stringify(el).slice(0, 600));
-              console.log('Kenya parsed: spend=' + spend + ' imps=' + imps + ' engs=' + engs + ' views=' + views);
-            }
 
             allRows.push({
               date: dateStr, currency: 'USD', siteName: 'LinkedIn',
