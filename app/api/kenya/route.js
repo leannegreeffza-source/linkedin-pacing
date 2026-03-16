@@ -158,20 +158,37 @@ export async function POST(request) {
               ? `${pad2(dr.month)}/${pad2(dr.day)}/${dr.year}`
               : toMMDDYYYY(startDate);
 
-            const spend  = parseFloat(el.costInLocalCurrency ?? 0);
-            const imps   = parseInt(el.impressions  ?? 0);
-            const clks   = parseInt(el.clicks       ?? 0);
-            const engs   = el.totalEngagements  != null ? parseInt(el.totalEngagements)  : null;
-            const views  = el.videoViews        != null ? parseInt(el.videoViews)        : null;
-            const starts = el.videoStarts       != null ? parseInt(el.videoStarts)       : null;
-            const comps  = el.videoCompletions  != null ? parseInt(el.videoCompletions)  : null;
-            const v3sec  = el.videoThruPlayActions          != null ? parseInt(el.videoThruPlayActions)          : null;
-            const v25    = el.videoFirstQuartileCompletions != null ? parseInt(el.videoFirstQuartileCompletions) : null;
-            const v50    = el.videoMidpointCompletions      != null ? parseInt(el.videoMidpointCompletions)      : null;
-            const v75    = el.videoThirdQuartileCompletions != null ? parseInt(el.videoThirdQuartileCompletions) : null;
-            const appDl  = el.mobileAppInstall  != null ? parseInt(el.mobileAppInstall)  : null;
+            // Helper: LinkedIn sometimes returns money as {amount:"123.45",currencyCode:"USD"}
+            // and sometimes as a plain string "123.45". Handle both.
+            const toMoney = (v) => {
+              if (v == null) return 0;
+              if (typeof v === 'object' && v.amount != null) return parseFloat(v.amount) || 0;
+              return parseFloat(v) || 0;
+            };
+            // Helper: numeric fields — may be int, string, or missing
+            const toInt = (v) => v != null ? (parseInt(v) || 0) : null;
+            const toIntOrNull = (v) => v != null ? (parseInt(v) || 0) : null;
+
+            const spend  = toMoney(el.costInLocalCurrency);
+            const imps   = parseInt(el.impressions ?? 0) || 0;
+            const clks   = parseInt(el.clicks      ?? 0) || 0;
+            const engs   = toIntOrNull(el.totalEngagements);
+            const views  = toIntOrNull(el.videoViews);
+            const starts = toIntOrNull(el.videoStarts);
+            const comps  = toIntOrNull(el.videoCompletions);
+            const v3sec  = toIntOrNull(el.videoThruPlayActions);
+            const v25    = toIntOrNull(el.videoFirstQuartileCompletions);
+            const v50    = toIntOrNull(el.videoMidpointCompletions);
+            const v75    = toIntOrNull(el.videoThirdQuartileCompletions);
+            const appDl  = toIntOrNull(el.mobileAppInstall);
             const vcr    = (starts && comps != null) ? parseFloat((comps / starts).toFixed(4)) : null;
             const cpm    = imps > 0 ? parseFloat(((spend / imps) * 1000).toFixed(4)) : 0;
+
+            // Debug log first row of first campaign to verify field values
+            if (allRows.length === 0) {
+              console.log('Kenya first row raw el:', JSON.stringify(el).slice(0, 600));
+              console.log('Kenya parsed: spend=' + spend + ' imps=' + imps + ' engs=' + engs + ' views=' + views);
+            }
 
             allRows.push({
               date: dateStr, currency: 'USD', siteName: 'LinkedIn',
