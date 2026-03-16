@@ -129,12 +129,32 @@ export async function POST(request) {
           total: campaignIds.length,
         });
 
+        // Fields must be listed explicitly — LinkedIn only returns
+        // impressions/clicks/spend by default. Commas must NOT be encoded,
+        // so we build the URL as a raw string (not URLSearchParams).
+        const FIELDS = [
+          'dateRange',
+          'costInLocalCurrency',
+          'impressions',
+          'clicks',
+          'totalEngagements',
+          'videoViews',
+          'videoStarts',
+          'videoCompletions',
+          'videoThruPlayActions',
+          'videoFirstQuartileCompletions',
+          'videoMidpointCompletions',
+          'videoThirdQuartileCompletions',
+          'mobileAppInstall',
+        ].join(',');
+
         for (const camp of campaignIds) {
           const url =
             `https://api.linkedin.com/v2/adAnalyticsV2` +
             `?q=analytics` +
             `&pivot=CAMPAIGN` +
             `&timeGranularity=DAILY` +
+            `&fields=${FIELDS}` +
             `&${drStr}` +
             `&campaigns[0]=urn:li:sponsoredCampaign:${camp.id}`;
 
