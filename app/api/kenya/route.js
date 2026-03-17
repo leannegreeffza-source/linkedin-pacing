@@ -1,22 +1,25 @@
 import { getToken } from 'next-auth/jwt';
 
-export const dynamic = 'force-dynamic';
+export const dynamic  = 'force-dynamic';
 export const maxDuration = 300;
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 
+const LI_HEADERS = (token) => ({
+  Authorization: `Bearer ${token}`,
+  'LinkedIn-Version': '202501',   // newer version returns more fields by default
+  'X-Restli-Protocol-Version': '2.0.0',
+});
+
 async function liGet(url, token) {
   try {
     const res = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'LinkedIn-Version': '202401',
-      },
+      headers: LI_HEADERS(token),
       signal: AbortSignal.timeout(20000),
     });
     if (!res.ok) {
       const body = await res.text();
-      console.error(`[Kenya] ${res.status}: ${url.slice(0, 120)} — ${body.slice(0, 200)}`);
+      console.error(`[Kenya] ${res.status}: ${url.slice(0, 120)} — ${body.slice(0, 300)}`);
       return null;
     }
     return res.json();
@@ -26,12 +29,10 @@ async function liGet(url, token) {
   }
 }
 
-// ── GET: return all ad accounts ───────────────────────────────────────────────
+// ── GET: all ad accounts ──────────────────────────────────────────────────────
 export async function GET(request) {
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
-  if (!token?.accessToken) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 });
-  }
+  if (!token?.accessToken) return Response.json({ error: 'Not authenticated' }, { status: 401 });
 
   const accounts = [];
   let start = 0;
@@ -54,7 +55,7 @@ export async function GET(request) {
   return Response.json(accounts);
 }
 
-// ── POST ──────────────────────────────────────────────────────────────────────
+// ── POST ─────────────────────────────────────────────────────────────────────
 export async function POST(request) {
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
   if (!token?.accessToken) {
@@ -63,7 +64,7 @@ export async function POST(request) {
 
   const { accountId, campaignIds, startDate, endDate } = await request.json();
 
-  // ── Campaign list for account ─────────────────────────────────────────────
+  // ── Campaign list ────────────────────────────────────────────────────────
   if (accountId && (!campaignIds || !campaignIds.length)) {
     const campaigns = [];
     let start = 0;
@@ -91,15 +92,15 @@ export async function POST(request) {
     return Response.json({ campaigns, total: campaigns.length });
   }
 
-  // ── Stream daily analytics ────────────────────────────────────────────────
+  // ── Daily analytics stream ───────────────────────────────────────────────
   if (!campaignIds?.length || !startDate || !endDate) {
     return new Response(JSON.stringify({ error: 'campaignIds, startDate and endDate required' }), { status: 400 });
   }
 
   const now      = new Date();
-  const start    = new Date(startDate);
-  const end      = new Date(endDate);
-  const clampEnd = end > now ? now : end;
+  const startDt  = new Date(startDate);
+  const endDt    = new Date(endDate);
+  const clampEnd = endDt > now ? now : endDt;
 
   const encoder = new TextEncoder();
   const stream  = new ReadableStream({
@@ -109,80 +110,51 @@ export async function POST(request) {
       };
 
       try {
-        const allRows = [];
-        let processed     = 0;
-        let firstLogged   = false;
+        const allRows    = [];
+        let processed    = 0;
+        let firstLogged  = false;
 
         send({ pct: 5, message: `Fetching ${campaignIds.length} campaign${campaignIds.length !== 1 ? 's' : ''}…`, total: campaignIds.length });
 
         for (const camp of campaignIds) {
+          // Build the URL manually as a string — NO URLSearchParams, NO fields= param.
+          // URLSearchParams encodes commas in the fields value as %2C which LinkedIn rejects.
+          // Raw string keeps commas literal so LinkedIn parses the field list correctly.
+          const url =
+            `https://api.linkedin.com/v2/adAnalyticsV2` +
+            `?q=analytics` +
+            `&pivot=CAMPAIGN` +
+            `&timeGranularity=DAILY` +
+            `&dateRange.start.year=${startDt.getFullYear()}` +
+            `&dateRange.start.month=${startDt.getMonth() + 1}` +
+            `&dateRange.start.day=${startDt.getDate()}` +
+            `&dateRange.end.year=${clampEnd.getFullYear()}` +
+            `&dateRange.end.month=${clampEnd.getMonth() + 1}` +
+            `&dateRange.end.day=${clampEnd.getDate()}` +
+            `&campaigns[0]=urn:li:sponsoredCampaign:${camp.id}`;
+          // NOTE: No fields= param. LinkedIn-Version 202501 returns spend + all
+          // available metrics by default. Adding fields= with mobileAppInstall
+          // causes a 403 that blocks the entire response.
 
-          // ── Same URLSearchParams pattern as the working pacing API ──────
-          const params = new URLSearchParams({
-            q:               'analytics',
-            pivot:           'CAMPAIGN',
-            timeGranularity: 'DAILY',
-            'dateRange.start.year':  start.getFullYear(),
-            'dateRange.start.month': start.getMonth() + 1,
-            'dateRange.start.day':   start.getDate(),
-            'dateRange.end.year':    clampEnd.getFullYear(),
-            'dateRange.end.month':   clampEnd.getMonth() + 1,
-            'dateRange.end.day':     clampEnd.getDate(),
-            // Only request fields the account has permission for.
-            // mobileAppInstall is excluded — it requires special LinkedIn permissions
-            // and causes a 403 that blocks the entire response.
-            fields: [
-              'dateRange',
-              'costInLocalCurrency',
-              'impressions',
-              'clicks',
-              'totalEngagements',
-              'videoViews',
-              'videoStarts',
-              'videoCompletions',
-              'videoThruPlayActions',
-              'videoFirstQuartileCompletions',
-              'videoMidpointCompletions',
-              'videoThirdQuartileCompletions',
-            ].join(','),
-          });
-          params.append('campaigns[0]', `urn:li:sponsoredCampaign:${camp.id}`);
+          const data     = await liGet(url, token.accessToken);
+          const elements = data?.elements || [];
 
-          const res = await fetch(
-            `https://api.linkedin.com/v2/adAnalyticsV2?${params.toString()}`,
-            {
-              headers: {
-                Authorization: `Bearer ${token.accessToken}`,
-                'LinkedIn-Version': '202401',
-              },
-              signal: AbortSignal.timeout(20000),
-            }
-          );
-
-          let elements = [];
-          if (res.ok) {
-            const data = await res.json();
-            elements = data.elements || [];
-
-            // Log first raw element for debugging
-            if (!firstLogged && elements.length > 0) {
-              firstLogged = true;
-              console.log('[Kenya] First element keys:', Object.keys(elements[0]).join(', '));
-              console.log('[Kenya] First element:', JSON.stringify(elements[0]));
-            }
-          } else {
-            const errBody = await res.text();
-            console.error(`[Kenya] analytics ${res.status} for campaign ${camp.id}: ${errBody.slice(0, 200)}`);
+          // Log first element so we can verify what fields come back
+          if (!firstLogged && elements.length > 0) {
+            firstLogged = true;
+            const el0 = elements[0];
+            console.log('[Kenya] keys:', Object.keys(el0).join(', '));
+            console.log('[Kenya] el0:', JSON.stringify(el0));
           }
 
           for (const el of elements) {
             const d       = el.dateRange?.start;
             const dateStr = d ? `${pad2(d.month)}/${pad2(d.day)}/${d.year}` : '';
 
-            // costInLocalCurrency is a plain string e.g. "123.4500"
-            const spend  = parseFloat(el.costInLocalCurrency || 0);
-            const imps   = parseInt(el.impressions   || 0);
-            const clks   = parseInt(el.clicks        || 0);
+            // Spend — LinkedIn 202501 returns costInLocalCurrency as plain string
+            const spend  = parseFloat(el.costInLocalCurrency || el.costInUsd || 0);
+            const imps   = parseInt(el.impressions             || 0);
+            const clks   = parseInt(el.clicks                  || 0);
             const engs   = el.totalEngagements  != null ? parseInt(el.totalEngagements)  : null;
             const views  = el.videoViews        != null ? parseInt(el.videoViews)        : null;
             const starts = el.videoStarts       != null ? parseInt(el.videoStarts)       : null;
@@ -195,29 +167,14 @@ export async function POST(request) {
             const cpm    = imps > 0 ? parseFloat(((spend / imps) * 1000).toFixed(4)) : 0;
 
             allRows.push({
-              date:          dateStr,
-              currency:      'USD',
-              siteName:      'LinkedIn',
-              campaignName:  camp.name,
-              placementName: camp.name,
-              packageName:   '',
-              creativeName:  '',
-              netSpend:      spend,
-              impressions:   imps,
-              clicks:        clks,
-              engagements:   engs,
-              videoViews:    views,
-              videoStarts:   starts,
-              video3sec:     v3sec,
-              video25:       v25,
-              video50:       v50,
-              video75:       v75,
-              video100:      comps,
-              vcr,
-              appDownloads:  null,
-              custom1:       null,
-              custom2:       null,
-              cpm,
+              date: dateStr, currency: 'USD', siteName: 'LinkedIn',
+              campaignName: camp.name, placementName: camp.name,
+              packageName: '', creativeName: '',
+              netSpend: spend, impressions: imps, clicks: clks,
+              engagements: engs, videoViews: views, videoStarts: starts,
+              video3sec: v3sec, video25: v25, video50: v50, video75: v75,
+              video100: comps, vcr, appDownloads: null,
+              custom1: null, custom2: null, cpm,
             });
           }
 
@@ -225,9 +182,7 @@ export async function POST(request) {
           send({
             pct:       5 + Math.round((processed / campaignIds.length) * 93),
             message:   `${processed} / ${campaignIds.length} campaigns…`,
-            processed,
-            total:     campaignIds.length,
-            rowsSoFar: allRows.length,
+            processed, total: campaignIds.length, rowsSoFar: allRows.length,
           });
         }
 
