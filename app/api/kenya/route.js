@@ -126,9 +126,11 @@ export async function POST(request) {
   const PROJECTION = [
     'dateRange',
     'costInLocalCurrency',
+    'costInUsd',
     'impressions',
     'clicks',
     'totalEngagements',
+    'engagements',
     'videoViews',
     'videoStarts',
     'videoCompletions',
@@ -184,16 +186,44 @@ export async function POST(request) {
 
           const elements = data?.elements || [];
 
+          // ONE-TIME: dump all field names from the first element we receive
+          if (elements.length > 0 && allRows.length === 0) {
+            const el0 = elements[0];
+            console.log('=== KENYA RAW ELEMENT KEYS ===', Object.keys(el0).join(' | '));
+            console.log('=== KENYA RAW ELEMENT VALUES ===', JSON.stringify(el0));
+          }
+
           for (const el of elements) {
             const dr      = el.dateRange?.start;
             const dateStr = dr
               ? `${pad2(dr.month)}/${pad2(dr.day)}/${dr.year}`
               : toMMDDYYYY(startDate);
 
-            const spend  = toMoney(el.costInLocalCurrency);
+            // Log ALL fields from LinkedIn response on very first row to find spend field name
+            if (allRows.length === 0) {
+              const allKeys = Object.keys(el);
+              console.log('[Kenya] All response field names:', allKeys.join(', '));
+              allKeys.forEach(k => {
+                const v = el[k];
+                if (typeof v !== 'object' || v === null) {
+                  console.log(`[Kenya]   ${k} = ${v}`);
+                } else {
+                  console.log(`[Kenya]   ${k} = ${JSON.stringify(v)}`);
+                }
+              });
+            }
+
+            // Try every possible spend field name LinkedIn might use
+            const spend  = toMoney(el.costInLocalCurrency)
+                        || toMoney(el.costInUsd)
+                        || toMoney(el.spend)
+                        || toMoney(el.totalSpend)
+                        || toMoney(el.cost)
+                        || 0;
             const imps   = parseInt(el.impressions ?? 0) || 0;
             const clks   = parseInt(el.clicks      ?? 0) || 0;
-            const engs   = toN(el.totalEngagements);
+            // totalEngagements = reactions+comments+shares+follows. Some versions use 'engagements'
+            const engs   = toN(el.totalEngagements) || toN(el.engagements);
             const views  = toN(el.videoViews);
             const starts = toN(el.videoStarts);
             const comps  = toN(el.videoCompletions);
