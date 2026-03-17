@@ -3,28 +3,20 @@ import { getToken } from 'next-auth/jwt';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-const LI = (t) => ({
-  Authorization: `Bearer ${t}`,
-  'LinkedIn-Version': '202401',
-});
-
 function pad2(n) { return String(n).padStart(2, '0'); }
-function toMMDDYYYY(str) { const [y, m, d] = str.split('-'); return `${m}/${d}/${y}`; }
-
-// Money: LinkedIn returns either plain string "123.45" or object {amount:"123.45"}
-function toMoney(v) {
-  if (v == null) return 0;
-  if (typeof v === 'object' && v.amount != null) return parseFloat(v.amount) || 0;
-  return parseFloat(v) || 0;
-}
-function toInt(v) { return v != null ? parseInt(v) || 0 : null; }
 
 async function liGet(url, token) {
   try {
-    const res = await fetch(url, { headers: LI(token), signal: AbortSignal.timeout(20000) });
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'LinkedIn-Version': '202401',
+      },
+      signal: AbortSignal.timeout(20000),
+    });
     if (!res.ok) {
       const body = await res.text();
-      console.error(`[Kenya] ${res.status} ${url.slice(0, 120)} → ${body.slice(0, 200)}`);
+      console.error(`[Kenya] ${res.status}: ${url.slice(0, 120)} — ${body.slice(0, 200)}`);
       return null;
     }
     return res.json();
@@ -34,12 +26,13 @@ async function liGet(url, token) {
   }
 }
 
-// ── GET: all ad accounts for the signed-in user ──────────────────────────────
+// ── GET: return all ad accounts ───────────────────────────────────────────────
 export async function GET(request) {
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
   if (!token?.accessToken) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 });
   }
+
   const accounts = [];
   let start = 0;
   while (start < 10000) {
@@ -61,7 +54,7 @@ export async function GET(request) {
   return Response.json(accounts);
 }
 
-// ── POST ─────────────────────────────────────────────────────────────────────
+// ── POST ──────────────────────────────────────────────────────────────────────
 export async function POST(request) {
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
   if (!token?.accessToken) {
@@ -70,7 +63,7 @@ export async function POST(request) {
 
   const { accountId, campaignIds, startDate, endDate } = await request.json();
 
-  // ── Return campaign list for an account ─────────────────────────────────
+  // ── Campaign list for account ─────────────────────────────────────────────
   if (accountId && (!campaignIds || !campaignIds.length)) {
     const campaigns = [];
     let start = 0;
@@ -98,24 +91,15 @@ export async function POST(request) {
     return Response.json({ campaigns, total: campaigns.length });
   }
 
-  // ── Stream daily analytics for selected campaigns ────────────────────────
+  // ── Stream daily analytics ────────────────────────────────────────────────
   if (!campaignIds?.length || !startDate || !endDate) {
     return new Response(JSON.stringify({ error: 'campaignIds, startDate and endDate required' }), { status: 400 });
   }
 
-  const startDt = new Date(startDate);
-  const endDt   = new Date(endDate);
-  const clEnd   = endDt > new Date() ? new Date() : endDt;
-
-  // Build date params exactly like the working pacing API does
-  const dr = {
-    'dateRange.start.year':  startDt.getFullYear(),
-    'dateRange.start.month': startDt.getMonth() + 1,
-    'dateRange.start.day':   startDt.getDate(),
-    'dateRange.end.year':    clEnd.getFullYear(),
-    'dateRange.end.month':   clEnd.getMonth() + 1,
-    'dateRange.end.day':     clEnd.getDate(),
-  };
+  const now      = new Date();
+  const start    = new Date(startDate);
+  const end      = new Date(endDate);
+  const clampEnd = end > now ? now : end;
 
   const encoder = new TextEncoder();
   const stream  = new ReadableStream({
@@ -126,68 +110,114 @@ export async function POST(request) {
 
       try {
         const allRows = [];
-        let processed = 0;
-        let firstRowLogged = false;
+        let processed     = 0;
+        let firstLogged   = false;
 
         send({ pct: 5, message: `Fetching ${campaignIds.length} campaign${campaignIds.length !== 1 ? 's' : ''}…`, total: campaignIds.length });
 
         for (const camp of campaignIds) {
-          // Build URL exactly like pacing API — using URLSearchParams so
-          // LinkedIn gets properly encoded params (this is what works in prod)
+
+          // ── Same URLSearchParams pattern as the working pacing API ──────
           const params = new URLSearchParams({
             q:               'analytics',
             pivot:           'CAMPAIGN',
             timeGranularity: 'DAILY',
-            ...dr,
+            'dateRange.start.year':  start.getFullYear(),
+            'dateRange.start.month': start.getMonth() + 1,
+            'dateRange.start.day':   start.getDate(),
+            'dateRange.end.year':    clampEnd.getFullYear(),
+            'dateRange.end.month':   clampEnd.getMonth() + 1,
+            'dateRange.end.day':     clampEnd.getDate(),
+            // Only request fields the account has permission for.
+            // mobileAppInstall is excluded — it requires special LinkedIn permissions
+            // and causes a 403 that blocks the entire response.
+            fields: [
+              'dateRange',
+              'costInLocalCurrency',
+              'impressions',
+              'clicks',
+              'totalEngagements',
+              'videoViews',
+              'videoStarts',
+              'videoCompletions',
+              'videoThruPlayActions',
+              'videoFirstQuartileCompletions',
+              'videoMidpointCompletions',
+              'videoThirdQuartileCompletions',
+            ].join(','),
           });
-          // campaigns[] param must be appended separately
           params.append('campaigns[0]', `urn:li:sponsoredCampaign:${camp.id}`);
 
-          const url = `https://api.linkedin.com/v2/adAnalyticsV2?${params.toString()}`;
-          const data = await liGet(url, token.accessToken);
-          const elements = data?.elements || [];
+          const res = await fetch(
+            `https://api.linkedin.com/v2/adAnalyticsV2?${params.toString()}`,
+            {
+              headers: {
+                Authorization: `Bearer ${token.accessToken}`,
+                'LinkedIn-Version': '202401',
+              },
+              signal: AbortSignal.timeout(20000),
+            }
+          );
 
-          // Log the first raw element so we can see exactly what LinkedIn returns
-          if (!firstRowLogged && elements.length > 0) {
-            firstRowLogged = true;
-            console.log('[Kenya] First element keys:', Object.keys(elements[0]).join(', '));
-            console.log('[Kenya] First element:', JSON.stringify(elements[0]));
+          let elements = [];
+          if (res.ok) {
+            const data = await res.json();
+            elements = data.elements || [];
+
+            // Log first raw element for debugging
+            if (!firstLogged && elements.length > 0) {
+              firstLogged = true;
+              console.log('[Kenya] First element keys:', Object.keys(elements[0]).join(', '));
+              console.log('[Kenya] First element:', JSON.stringify(elements[0]));
+            }
+          } else {
+            const errBody = await res.text();
+            console.error(`[Kenya] analytics ${res.status} for campaign ${camp.id}: ${errBody.slice(0, 200)}`);
           }
 
           for (const el of elements) {
             const d       = el.dateRange?.start;
-            const dateStr = d
-              ? `${pad2(d.month)}/${pad2(d.day)}/${d.year}`
-              : toMMDDYYYY(startDate);
+            const dateStr = d ? `${pad2(d.month)}/${pad2(d.day)}/${d.year}` : '';
 
-            // Spend: try all known field names LinkedIn uses
-            const spend = toMoney(el.costInLocalCurrency)
-                       || toMoney(el.costInUsd)
-                       || 0;
-
-            const imps   = parseInt(el.impressions ?? 0) || 0;
-            const clks   = parseInt(el.clicks      ?? 0) || 0;
-            const engs   = toInt(el.totalEngagements) ?? toInt(el.engagements);
-            const views  = toInt(el.videoViews);
-            const starts = toInt(el.videoStarts);
-            const comps  = toInt(el.videoCompletions);
-            const v3sec  = toInt(el.videoThruPlayActions);
-            const v25    = toInt(el.videoFirstQuartileCompletions);
-            const v50    = toInt(el.videoMidpointCompletions);
-            const v75    = toInt(el.videoThirdQuartileCompletions);
-            const vcr    = (starts && comps != null) ? parseFloat((comps / starts).toFixed(4)) : null;
+            // costInLocalCurrency is a plain string e.g. "123.4500"
+            const spend  = parseFloat(el.costInLocalCurrency || 0);
+            const imps   = parseInt(el.impressions   || 0);
+            const clks   = parseInt(el.clicks        || 0);
+            const engs   = el.totalEngagements  != null ? parseInt(el.totalEngagements)  : null;
+            const views  = el.videoViews        != null ? parseInt(el.videoViews)        : null;
+            const starts = el.videoStarts       != null ? parseInt(el.videoStarts)       : null;
+            const comps  = el.videoCompletions  != null ? parseInt(el.videoCompletions)  : null;
+            const v3sec  = el.videoThruPlayActions          != null ? parseInt(el.videoThruPlayActions)          : null;
+            const v25    = el.videoFirstQuartileCompletions != null ? parseInt(el.videoFirstQuartileCompletions) : null;
+            const v50    = el.videoMidpointCompletions      != null ? parseInt(el.videoMidpointCompletions)      : null;
+            const v75    = el.videoThirdQuartileCompletions != null ? parseInt(el.videoThirdQuartileCompletions) : null;
+            const vcr    = (starts > 0 && comps != null) ? parseFloat((comps / starts).toFixed(4)) : null;
             const cpm    = imps > 0 ? parseFloat(((spend / imps) * 1000).toFixed(4)) : 0;
 
             allRows.push({
-              date: dateStr, currency: 'USD', siteName: 'LinkedIn',
+              date:          dateStr,
+              currency:      'USD',
+              siteName:      'LinkedIn',
               campaignName:  camp.name,
               placementName: camp.name,
-              packageName: '', creativeName: '',
-              netSpend: spend, impressions: imps, clicks: clks,
-              engagements: engs, videoViews: views, videoStarts: starts,
-              video3sec: v3sec, video25: v25, video50: v50, video75: v75,
-              video100: comps, vcr, appDownloads: null,
-              custom1: null, custom2: null, cpm,
+              packageName:   '',
+              creativeName:  '',
+              netSpend:      spend,
+              impressions:   imps,
+              clicks:        clks,
+              engagements:   engs,
+              videoViews:    views,
+              videoStarts:   starts,
+              video3sec:     v3sec,
+              video25:       v25,
+              video50:       v50,
+              video75:       v75,
+              video100:      comps,
+              vcr,
+              appDownloads:  null,
+              custom1:       null,
+              custom2:       null,
+              cpm,
             });
           }
 
@@ -195,11 +225,12 @@ export async function POST(request) {
           send({
             pct:       5 + Math.round((processed / campaignIds.length) * 93),
             message:   `${processed} / ${campaignIds.length} campaigns…`,
-            processed, total: campaignIds.length, rowsSoFar: allRows.length,
+            processed,
+            total:     campaignIds.length,
+            rowsSoFar: allRows.length,
           });
         }
 
-        // Sort by date then campaign name
         allRows.sort((a, b) => {
           const toD = s => { const [m, d, y] = s.split('/'); return new Date(`${y}-${m}-${d}`); };
           return toD(a.date) - toD(b.date) || a.campaignName.localeCompare(b.campaignName);
