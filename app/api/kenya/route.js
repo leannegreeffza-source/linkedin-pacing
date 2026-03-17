@@ -5,16 +5,16 @@ export const maxDuration = 300;
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 
-const LI_HEADERS = (token) => ({
+// Standard LinkedIn headers — same as the working pacing API
+const HEADERS = (token) => ({
   Authorization: `Bearer ${token}`,
-  'LinkedIn-Version': '202501',   // newer version returns more fields by default
-  'X-Restli-Protocol-Version': '2.0.0',
+  'LinkedIn-Version': '202401',
 });
 
 async function liGet(url, token) {
   try {
     const res = await fetch(url, {
-      headers: LI_HEADERS(token),
+      headers: HEADERS(token),
       signal: AbortSignal.timeout(20000),
     });
     if (!res.ok) {
@@ -64,11 +64,12 @@ export async function POST(request) {
 
   const { accountId, campaignIds, startDate, endDate } = await request.json();
 
-  // ── Campaign list ────────────────────────────────────────────────────────
+  // ── Campaign list for an account ─────────────────────────────────────────
   if (accountId && (!campaignIds || !campaignIds.length)) {
     const campaigns = [];
     let start = 0;
     while (start < 5000) {
+      // Plain URL, no extra headers, same pattern that worked before
       const data = await liGet(
         `https://api.linkedin.com/v2/adCampaignsV2?q=search` +
         `&search.account.values[0]=urn:li:sponsoredAccount:${accountId}` +
@@ -92,9 +93,9 @@ export async function POST(request) {
     return Response.json({ campaigns, total: campaigns.length });
   }
 
-  // ── Daily analytics stream ───────────────────────────────────────────────
+  // ── Stream daily analytics ────────────────────────────────────────────────
   if (!campaignIds?.length || !startDate || !endDate) {
-    return new Response(JSON.stringify({ error: 'campaignIds, startDate and endDate required' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'Missing required params' }), { status: 400 });
   }
 
   const now      = new Date();
@@ -110,16 +111,32 @@ export async function POST(request) {
       };
 
       try {
-        const allRows    = [];
-        let processed    = 0;
-        let firstLogged  = false;
+        const allRows   = [];
+        let processed   = 0;
+        let firstLogged = false;
 
         send({ pct: 5, message: `Fetching ${campaignIds.length} campaign${campaignIds.length !== 1 ? 's' : ''}…`, total: campaignIds.length });
 
         for (const camp of campaignIds) {
-          // Build the URL manually as a string — NO URLSearchParams, NO fields= param.
-          // URLSearchParams encodes commas in the fields value as %2C which LinkedIn rejects.
-          // Raw string keeps commas literal so LinkedIn parses the field list correctly.
+          // Only request fields we know are permitted on this account.
+          // videoThruPlayActions and mobileAppInstall both return 403 ACCESS_DENIED.
+          // We request only the safe core fields here.
+          const safeFields = [
+            'dateRange',
+            'costInLocalCurrency',
+            'impressions',
+            'clicks',
+            'totalEngagements',
+            'videoViews',
+            'videoStarts',
+            'videoCompletions',
+            'videoFirstQuartileCompletions',
+            'videoMidpointCompletions',
+            'videoThirdQuartileCompletions',
+          ].join(',');
+
+          // Build URL as raw string so commas in fields stay as literal commas
+          // (URLSearchParams encodes them as %2C which LinkedIn ignores)
           const url =
             `https://api.linkedin.com/v2/adAnalyticsV2` +
             `?q=analytics` +
@@ -131,35 +148,29 @@ export async function POST(request) {
             `&dateRange.end.year=${clampEnd.getFullYear()}` +
             `&dateRange.end.month=${clampEnd.getMonth() + 1}` +
             `&dateRange.end.day=${clampEnd.getDate()}` +
-            `&campaigns[0]=urn:li:sponsoredCampaign:${camp.id}`;
-          // NOTE: No fields= param. LinkedIn-Version 202501 returns spend + all
-          // available metrics by default. Adding fields= with mobileAppInstall
-          // causes a 403 that blocks the entire response.
+            `&campaigns[0]=urn:li:sponsoredCampaign:${camp.id}` +
+            `&fields=${safeFields}`;
 
           const data     = await liGet(url, token.accessToken);
           const elements = data?.elements || [];
 
-          // Log first element so we can verify what fields come back
           if (!firstLogged && elements.length > 0) {
             firstLogged = true;
-            const el0 = elements[0];
-            console.log('[Kenya] keys:', Object.keys(el0).join(', '));
-            console.log('[Kenya] el0:', JSON.stringify(el0));
+            console.log('[Kenya] keys:', Object.keys(elements[0]).join(', '));
+            console.log('[Kenya] sample:', JSON.stringify(elements[0]));
           }
 
           for (const el of elements) {
             const d       = el.dateRange?.start;
             const dateStr = d ? `${pad2(d.month)}/${pad2(d.day)}/${d.year}` : '';
 
-            // Spend — LinkedIn 202501 returns costInLocalCurrency as plain string
-            const spend  = parseFloat(el.costInLocalCurrency || el.costInUsd || 0);
-            const imps   = parseInt(el.impressions             || 0);
-            const clks   = parseInt(el.clicks                  || 0);
+            const spend  = parseFloat(el.costInLocalCurrency || 0);
+            const imps   = parseInt(el.impressions   || 0);
+            const clks   = parseInt(el.clicks        || 0);
             const engs   = el.totalEngagements  != null ? parseInt(el.totalEngagements)  : null;
             const views  = el.videoViews        != null ? parseInt(el.videoViews)        : null;
             const starts = el.videoStarts       != null ? parseInt(el.videoStarts)       : null;
             const comps  = el.videoCompletions  != null ? parseInt(el.videoCompletions)  : null;
-            const v3sec  = el.videoThruPlayActions          != null ? parseInt(el.videoThruPlayActions)          : null;
             const v25    = el.videoFirstQuartileCompletions != null ? parseInt(el.videoFirstQuartileCompletions) : null;
             const v50    = el.videoMidpointCompletions      != null ? parseInt(el.videoMidpointCompletions)      : null;
             const v75    = el.videoThirdQuartileCompletions != null ? parseInt(el.videoThirdQuartileCompletions) : null;
@@ -172,8 +183,9 @@ export async function POST(request) {
               packageName: '', creativeName: '',
               netSpend: spend, impressions: imps, clicks: clks,
               engagements: engs, videoViews: views, videoStarts: starts,
-              video3sec: v3sec, video25: v25, video50: v50, video75: v75,
-              video100: comps, vcr, appDownloads: null,
+              video3sec: null,   // videoThruPlayActions — restricted field
+              video25: v25, video50: v50, video75: v75, video100: comps,
+              vcr, appDownloads: null,
               custom1: null, custom2: null, cpm,
             });
           }
