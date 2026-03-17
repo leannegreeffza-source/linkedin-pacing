@@ -5,7 +5,7 @@ import { useSession } from 'next-auth/react';
 import {
   RefreshCw, FileSpreadsheet, Calendar, AlertCircle,
   FileDown, Table2, ChevronDown, Check, Search, X,
-  Users, BarChart2
+  Users, BarChart2, Info
 } from 'lucide-react';
 
 const COLS = [
@@ -172,6 +172,7 @@ export default function KenyaTab() {
   const [lastRefresh, setLastRefresh] = useState(null);
   const [progress,    setProgress]    = useState({ pct: 0, message: '', processed: 0, total: 0, rowsSoFar: 0 });
   const [tableSearch, setTableSearch] = useState('');
+  const [showColInfo,  setShowColInfo]  = useState(false);
 
   const acctMenuRef = useRef();
   const campMenuRef = useRef();
@@ -397,7 +398,64 @@ export default function KenyaTab() {
           className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-xs font-bold disabled:opacity-40 transition-colors">
           <FileDown className="w-3.5 h-3.5" /> Export CSV
         </button>
+
+        <button onClick={() => setShowColInfo(v => !v)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showColInfo ? 'bg-indigo-700 border-indigo-600 text-white' : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'}`}>
+          <Info className="w-3.5 h-3.5" /> Columns
+        </button>
       </div>
+
+      {/* COLUMN SUMMARY PANEL */}
+      {showColInfo && (
+        <div className="bg-slate-800/80 border-b border-slate-700 px-4 py-3 shrink-0">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-white uppercase tracking-wider">Column Summary — 23 Columns</span>
+            <div className="flex items-center gap-4 text-xs">
+              <span className="flex items-center gap-1"><span className="text-green-400">✅</span><span className="text-slate-400">Live from LinkedIn API</span></span>
+              <span className="flex items-center gap-1"><span className="text-yellow-400">⚬</span><span className="text-slate-400">Computed</span></span>
+              <span className="flex items-center gap-1"><span className="text-slate-400">⬜</span><span className="text-slate-400">Blank (not available)</span></span>
+              <span className="flex items-center gap-1"><span className="text-red-400">🚫</span><span className="text-slate-400">Restricted (needs special LinkedIn permission)</span></span>
+              <button onClick={() => setShowColInfo(false)} className="text-slate-400 hover:text-white ml-2"><X className="w-3.5 h-3.5" /></button>
+            </div>
+          </div>
+          <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
+            {[
+              { n:  1, label: 'Date',                        status: '✅', note: 'Daily, MM/DD/YYYY format',                             color: 'text-green-400' },
+              { n:  2, label: 'Currency Spend is Entered In',status: '✅', note: 'Always "USD"',                                         color: 'text-green-400' },
+              { n:  3, label: 'Site Name',                   status: '✅', note: 'Always "LinkedIn"',                                    color: 'text-green-400' },
+              { n:  4, label: 'Campaign Name',               status: '✅', note: 'From LinkedIn campaign list',                          color: 'text-green-400' },
+              { n:  5, label: 'Placement Name',              status: '✅', note: 'Same as Campaign Name',                               color: 'text-green-400' },
+              { n:  6, label: 'Package Name',                status: '⬜', note: 'Not available via LinkedIn API',                       color: 'text-slate-500' },
+              { n:  7, label: 'Creative Name',               status: '⬜', note: 'Requires separate creative API call',                  color: 'text-slate-500' },
+              { n:  8, label: 'Net Spend',                   status: '✅', note: 'costInLocalCurrency — USD',                           color: 'text-green-400' },
+              { n:  9, label: 'Impressions',                 status: '✅', note: 'Total impressions served',                             color: 'text-green-400' },
+              { n: 10, label: 'Clicks',                      status: '✅', note: 'Total clicks',                                        color: 'text-green-400' },
+              { n: 11, label: 'Engagements',                 status: '✅', note: 'Reactions + comments + shares + follows',              color: 'text-green-400' },
+              { n: 12, label: 'Video Views',                 status: '✅', note: 'videoViews (2-second views)',                          color: 'text-green-400' },
+              { n: 13, label: 'Video Starts',                status: '✅', note: 'videoStarts',                                         color: 'text-green-400' },
+              { n: 14, label: 'Video 3 Sec View',            status: '🚫', note: 'videoThruPlayActions — ACCESS_DENIED on this account', color: 'text-red-400' },
+              { n: 15, label: 'Video Complete 25%',          status: '✅', note: 'videoFirstQuartileCompletions',                        color: 'text-green-400' },
+              { n: 16, label: 'Video Complete 50%',          status: '✅', note: 'videoMidpointCompletions',                             color: 'text-green-400' },
+              { n: 17, label: 'Video Complete 75%',          status: '✅', note: 'videoThirdQuartileCompletions',                        color: 'text-green-400' },
+              { n: 18, label: 'Video Complete 100%',         status: '✅', note: 'videoCompletions',                                    color: 'text-green-400' },
+              { n: 19, label: 'VCR',                         status: '⚬', note: 'Computed: video100 ÷ videoStarts',                     color: 'text-yellow-400' },
+              { n: 20, label: 'App Downloads',               status: '🚫', note: 'mobileAppInstall — requires special app permissions',  color: 'text-red-400' },
+              { n: 21, label: 'Custom Performance Metric 1', status: '⬜', note: 'Not available via LinkedIn standard API',              color: 'text-slate-500' },
+              { n: 22, label: 'Custom Performance Metric 2', status: '⬜', note: 'Not available via LinkedIn standard API',              color: 'text-slate-500' },
+              { n: 23, label: 'CPM',                         status: '⚬', note: 'Computed: (spend ÷ impressions) × 1000',               color: 'text-yellow-400' },
+            ].map(col => (
+              <div key={col.n} className="flex items-start gap-2 bg-slate-700/50 rounded-lg px-3 py-2">
+                <span className="text-slate-500 font-mono text-xs w-5 shrink-0 mt-0.5">{col.n}</span>
+                <span className={`text-sm shrink-0 mt-0.5`}>{col.status}</span>
+                <div className="min-w-0">
+                  <p className={`text-xs font-semibold ${col.color} leading-snug`}>{col.label}</p>
+                  <p className="text-xs text-slate-500 leading-snug mt-0.5">{col.note}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* DATE BAR */}
       <div className="bg-slate-800/60 border-b border-slate-700 px-4 py-2 flex items-center gap-3 flex-wrap shrink-0">
