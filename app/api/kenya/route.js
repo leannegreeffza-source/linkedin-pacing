@@ -3,7 +3,7 @@ import { getToken } from 'next-auth/jwt';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-const LI_HEADERS = (t) => ({
+const LI = (t) => ({
   Authorization: `Bearer ${t}`,
   'LinkedIn-Version': '202401',
 });
@@ -11,36 +11,35 @@ const LI_HEADERS = (t) => ({
 function pad2(n) { return String(n).padStart(2, '0'); }
 function toMMDDYYYY(str) { const [y, m, d] = str.split('-'); return `${m}/${d}/${y}`; }
 
+// Money: LinkedIn returns either plain string "123.45" or object {amount:"123.45"}
+function toMoney(v) {
+  if (v == null) return 0;
+  if (typeof v === 'object' && v.amount != null) return parseFloat(v.amount) || 0;
+  return parseFloat(v) || 0;
+}
+function toInt(v) { return v != null ? parseInt(v) || 0 : null; }
+
 async function liGet(url, token) {
   try {
-    const res = await fetch(url, { headers: LI_HEADERS(token), signal: AbortSignal.timeout(20000) });
+    const res = await fetch(url, { headers: LI(token), signal: AbortSignal.timeout(20000) });
     if (!res.ok) {
       const body = await res.text();
-      console.error(`liGet ${res.status}: ${url.slice(0, 150)} — ${body.slice(0, 300)}`);
+      console.error(`[Kenya] ${res.status} ${url.slice(0, 120)} → ${body.slice(0, 200)}`);
       return null;
     }
     return res.json();
   } catch (e) {
-    console.error(`liGet exception: ${e.message}`);
+    console.error(`[Kenya] fetch error: ${e.message}`);
     return null;
   }
 }
 
-// Helper: LinkedIn returns money as {amount:"123.45",currencyCode:"USD"} OR plain string
-const toMoney = (v) => {
-  if (v == null) return 0;
-  if (typeof v === 'object' && v.amount != null) return parseFloat(v.amount) || 0;
-  return parseFloat(v) || 0;
-};
-const toN = (v) => v != null ? (parseInt(v) || 0) : null;
-
-// ── GET: all ad accounts for signed-in user ───────────────────────────────────
+// ── GET: all ad accounts for the signed-in user ──────────────────────────────
 export async function GET(request) {
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
   if (!token?.accessToken) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 });
   }
-
   const accounts = [];
   let start = 0;
   while (start < 10000) {
@@ -62,18 +61,17 @@ export async function GET(request) {
   return Response.json(accounts);
 }
 
-// ── POST ──────────────────────────────────────────────────────────────────────
+// ── POST ─────────────────────────────────────────────────────────────────────
 export async function POST(request) {
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
   if (!token?.accessToken) {
     return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 });
   }
 
-  const body = await request.json();
-  const { accountId, campaignIds, startDate, endDate } = body;
+  const { accountId, campaignIds, startDate, endDate } = await request.json();
 
-  // ── accountId only → return full campaign list ───────────────────────────
-  if (accountId && (!campaignIds || campaignIds.length === 0)) {
+  // ── Return campaign list for an account ─────────────────────────────────
+  if (accountId && (!campaignIds || !campaignIds.length)) {
     const campaigns = [];
     let start = 0;
     while (start < 5000) {
@@ -100,45 +98,24 @@ export async function POST(request) {
     return Response.json({ campaigns, total: campaigns.length });
   }
 
-  // ── campaignIds + dates → stream daily analytics ─────────────────────────
+  // ── Stream daily analytics for selected campaigns ────────────────────────
   if (!campaignIds?.length || !startDate || !endDate) {
-    return new Response(
-      JSON.stringify({ error: 'campaignIds, startDate and endDate required' }),
-      { status: 400 }
-    );
+    return new Response(JSON.stringify({ error: 'campaignIds, startDate and endDate required' }), { status: 400 });
   }
 
   const startDt = new Date(startDate);
   const endDt   = new Date(endDate);
   const clEnd   = endDt > new Date() ? new Date() : endDt;
 
-  const drStr =
-    `dateRange.start.year=${startDt.getFullYear()}` +
-    `&dateRange.start.month=${startDt.getMonth() + 1}` +
-    `&dateRange.start.day=${startDt.getDate()}` +
-    `&dateRange.end.year=${clEnd.getFullYear()}` +
-    `&dateRange.end.month=${clEnd.getMonth() + 1}` +
-    `&dateRange.end.day=${clEnd.getDate()}`;
-
-  // LinkedIn adAnalyticsV2 field projection using Restli 2.0 syntax.
-  // Fields are listed in parentheses appended to the endpoint URL path.
-  // This is the correct way to request non-default fields.
-  const PROJECTION = [
-    'dateRange',
-    'costInLocalCurrency',
-    'costInUsd',
-    'impressions',
-    'clicks',
-    'totalEngagements',
-    'engagements',
-    'videoViews',
-    'videoStarts',
-    'videoCompletions',
-    'videoThruPlayActions',
-    'videoFirstQuartileCompletions',
-    'videoMidpointCompletions',
-    'videoThirdQuartileCompletions',
-  ].join(',');
+  // Build date params exactly like the working pacing API does
+  const dr = {
+    'dateRange.start.year':  startDt.getFullYear(),
+    'dateRange.start.month': startDt.getMonth() + 1,
+    'dateRange.start.day':   startDt.getDate(),
+    'dateRange.end.year':    clEnd.getFullYear(),
+    'dateRange.end.month':   clEnd.getMonth() + 1,
+    'dateRange.end.day':     clEnd.getDate(),
+  };
 
   const encoder = new TextEncoder();
   const stream  = new ReadableStream({
@@ -150,110 +127,79 @@ export async function POST(request) {
       try {
         const allRows = [];
         let processed = 0;
+        let firstRowLogged = false;
 
-        send({
-          pct: 5,
-          message: `Fetching data for ${campaignIds.length} campaign${campaignIds.length !== 1 ? 's' : ''}…`,
-          total: campaignIds.length,
-        });
+        send({ pct: 5, message: `Fetching ${campaignIds.length} campaign${campaignIds.length !== 1 ? 's' : ''}…`, total: campaignIds.length });
 
         for (const camp of campaignIds) {
-          // Try with field projection first; fall back to no projection if it fails
-          const urlWithProjection =
-            `https://api.linkedin.com/v2/adAnalyticsV2` +
-            `?q=analytics` +
-            `&pivot=CAMPAIGN` +
-            `&timeGranularity=DAILY` +
-            `&${drStr}` +
-            `&campaigns[0]=urn:li:sponsoredCampaign:${camp.id}` +
-            `&fields=${PROJECTION}`;
+          // Build URL exactly like pacing API — using URLSearchParams so
+          // LinkedIn gets properly encoded params (this is what works in prod)
+          const params = new URLSearchParams({
+            q:               'analytics',
+            pivot:           'CAMPAIGN',
+            timeGranularity: 'DAILY',
+            ...dr,
+          });
+          // campaigns[] param must be appended separately
+          params.append('campaigns[0]', `urn:li:sponsoredCampaign:${camp.id}`);
 
-          const urlNoProjection =
-            `https://api.linkedin.com/v2/adAnalyticsV2` +
-            `?q=analytics` +
-            `&pivot=CAMPAIGN` +
-            `&timeGranularity=DAILY` +
-            `&${drStr}` +
-            `&campaigns[0]=urn:li:sponsoredCampaign:${camp.id}`;
-
-          let data = await liGet(urlWithProjection, token.accessToken);
-
-          // If projection caused an empty response, fall back to no projection
-          if (!data?.elements?.length) {
-            data = await liGet(urlNoProjection, token.accessToken);
-          }
-
+          const url = `https://api.linkedin.com/v2/adAnalyticsV2?${params.toString()}`;
+          const data = await liGet(url, token.accessToken);
           const elements = data?.elements || [];
 
-          // ONE-TIME: dump all field names from the first element we receive
-          if (elements.length > 0 && allRows.length === 0) {
-            const el0 = elements[0];
-            console.log('=== KENYA RAW ELEMENT KEYS ===', Object.keys(el0).join(' | '));
-            console.log('=== KENYA RAW ELEMENT VALUES ===', JSON.stringify(el0));
+          // Log the first raw element so we can see exactly what LinkedIn returns
+          if (!firstRowLogged && elements.length > 0) {
+            firstRowLogged = true;
+            console.log('[Kenya] First element keys:', Object.keys(elements[0]).join(', '));
+            console.log('[Kenya] First element:', JSON.stringify(elements[0]));
           }
 
           for (const el of elements) {
-            const dr      = el.dateRange?.start;
-            const dateStr = dr
-              ? `${pad2(dr.month)}/${pad2(dr.day)}/${dr.year}`
+            const d       = el.dateRange?.start;
+            const dateStr = d
+              ? `${pad2(d.month)}/${pad2(d.day)}/${d.year}`
               : toMMDDYYYY(startDate);
 
-            // Log ALL fields from LinkedIn response on very first row to find spend field name
-            if (allRows.length === 0) {
-              const allKeys = Object.keys(el);
-              console.log('[Kenya] All response field names:', allKeys.join(', '));
-              allKeys.forEach(k => {
-                const v = el[k];
-                if (typeof v !== 'object' || v === null) {
-                  console.log(`[Kenya]   ${k} = ${v}`);
-                } else {
-                  console.log(`[Kenya]   ${k} = ${JSON.stringify(v)}`);
-                }
-              });
-            }
+            // Spend: try all known field names LinkedIn uses
+            const spend = toMoney(el.costInLocalCurrency)
+                       || toMoney(el.costInUsd)
+                       || 0;
 
-            // Try every possible spend field name LinkedIn might use
-            const spend  = toMoney(el.costInLocalCurrency)
-                        || toMoney(el.costInUsd)
-                        || toMoney(el.spend)
-                        || toMoney(el.totalSpend)
-                        || toMoney(el.cost)
-                        || 0;
             const imps   = parseInt(el.impressions ?? 0) || 0;
             const clks   = parseInt(el.clicks      ?? 0) || 0;
-            // totalEngagements = reactions+comments+shares+follows. Some versions use 'engagements'
-            const engs   = toN(el.totalEngagements) || toN(el.engagements);
-            const views  = toN(el.videoViews);
-            const starts = toN(el.videoStarts);
-            const comps  = toN(el.videoCompletions);
-            const v3sec  = toN(el.videoThruPlayActions);
-            const v25    = toN(el.videoFirstQuartileCompletions);
-            const v50    = toN(el.videoMidpointCompletions);
-            const v75    = toN(el.videoThirdQuartileCompletions);
-            const appDl  = null; // mobileAppInstall needs special LinkedIn permissions
+            const engs   = toInt(el.totalEngagements) ?? toInt(el.engagements);
+            const views  = toInt(el.videoViews);
+            const starts = toInt(el.videoStarts);
+            const comps  = toInt(el.videoCompletions);
+            const v3sec  = toInt(el.videoThruPlayActions);
+            const v25    = toInt(el.videoFirstQuartileCompletions);
+            const v50    = toInt(el.videoMidpointCompletions);
+            const v75    = toInt(el.videoThirdQuartileCompletions);
             const vcr    = (starts && comps != null) ? parseFloat((comps / starts).toFixed(4)) : null;
             const cpm    = imps > 0 ? parseFloat(((spend / imps) * 1000).toFixed(4)) : 0;
 
             allRows.push({
               date: dateStr, currency: 'USD', siteName: 'LinkedIn',
-              campaignName: camp.name, placementName: camp.name,
+              campaignName:  camp.name,
+              placementName: camp.name,
               packageName: '', creativeName: '',
               netSpend: spend, impressions: imps, clicks: clks,
               engagements: engs, videoViews: views, videoStarts: starts,
               video3sec: v3sec, video25: v25, video50: v50, video75: v75,
-              video100: comps, vcr, appDownloads: appDl,
+              video100: comps, vcr, appDownloads: null,
               custom1: null, custom2: null, cpm,
             });
           }
 
           processed++;
           send({
-            pct: 5 + Math.round((processed / campaignIds.length) * 93),
-            message: `${processed} / ${campaignIds.length} campaigns…`,
+            pct:       5 + Math.round((processed / campaignIds.length) * 93),
+            message:   `${processed} / ${campaignIds.length} campaigns…`,
             processed, total: campaignIds.length, rowsSoFar: allRows.length,
           });
         }
 
+        // Sort by date then campaign name
         allRows.sort((a, b) => {
           const toD = s => { const [m, d, y] = s.split('/'); return new Date(`${y}-${m}-${d}`); };
           return toD(a.date) - toD(b.date) || a.campaignName.localeCompare(b.campaignName);
@@ -262,20 +208,19 @@ export async function POST(request) {
         send({ done: true, rows: allRows, total: allRows.length });
 
       } catch (err) {
-        console.error('Kenya stream error:', err);
+        console.error('[Kenya] stream error:', err);
         send({ error: err.message });
       }
-
       controller.close();
     },
   });
 
   return new Response(stream, {
     headers: {
-      'Content-Type': 'application/x-ndjson',
+      'Content-Type':      'application/x-ndjson',
       'Transfer-Encoding': 'chunked',
       'X-Accel-Buffering': 'no',
-      'Cache-Control': 'no-cache',
+      'Cache-Control':     'no-cache',
     },
   });
 }
