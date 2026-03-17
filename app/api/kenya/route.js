@@ -138,7 +138,6 @@ export async function POST(request) {
     'videoFirstQuartileCompletions',
     'videoMidpointCompletions',
     'videoThirdQuartileCompletions',
-    'mobileAppInstall',
   ].join(',');
 
   const encoder = new TextEncoder();
@@ -231,7 +230,7 @@ export async function POST(request) {
             const v25    = toN(el.videoFirstQuartileCompletions);
             const v50    = toN(el.videoMidpointCompletions);
             const v75    = toN(el.videoThirdQuartileCompletions);
-            const appDl  = toN(el.mobileAppInstall);
+            const appDl  = null; // mobileAppInstall needs special LinkedIn permissions
             const vcr    = (starts && comps != null) ? parseFloat((comps / starts).toFixed(4)) : null;
             const cpm    = imps > 0 ? parseFloat(((spend / imps) * 1000).toFixed(4)) : 0;
 
