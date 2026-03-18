@@ -138,13 +138,29 @@ function exportCSV(rows) {
 }
 
 function computeTotals(rows) {
-  return rows.reduce((t, r) => ({
+  const n = rows.length || 1;
+  const sum = rows.reduce((t, r) => ({
     netSpend:    t.netSpend    + (r.netSpend    || 0),
     impressions: t.impressions + (r.impressions || 0),
     clicks:      t.clicks      + (r.clicks      || 0),
+    engagements: t.engagements + (r.engagements || 0),
     videoViews:  t.videoViews  + (r.videoViews  || 0),
+    videoStarts: t.videoStarts + (r.videoStarts || 0),
+    video25:     t.video25     + (r.video25     || 0),
+    video50:     t.video50     + (r.video50     || 0),
+    video75:     t.video75     + (r.video75     || 0),
     video100:    t.video100    + (r.video100     || 0),
-  }), { netSpend: 0, impressions: 0, clicks: 0, videoViews: 0, video100: 0 });
+    cpm:         t.cpm         + (r.cpm         || 0),
+    vcrSum:      t.vcrSum      + (r.vcr != null ? r.vcr : 0),
+    vcrCount:    t.vcrCount    + (r.vcr != null ? 1 : 0),
+  }), { netSpend:0, impressions:0, clicks:0, engagements:0, videoViews:0, videoStarts:0, video25:0, video50:0, video75:0, video100:0, cpm:0, vcrSum:0, vcrCount:0 });
+
+  return {
+    ...sum,
+    // Averages for % / rate columns
+    vcr:    sum.vcrCount  > 0 ? sum.vcrSum  / sum.vcrCount  : null,
+    cpmAvg: n             > 0 ? sum.cpm     / n             : null,
+  };
 }
 
 export default function KenyaTab() {
@@ -582,17 +598,47 @@ export default function KenyaTab() {
             <tfoot>
               <tr style={{ background: '#0f172a', borderTop: '2px solid #475569' }}>
                 {COLS.map((col, i) => {
-                  const showTotal = ['netSpend','impressions','clicks','videoViews','video100'].includes(col.key);
+                  // Columns that get SUM in the footer
+                  const sumCols = ['netSpend','impressions','clicks','engagements','videoViews','videoStarts','video25','video50','video75','video100'];
+                  // Columns that get AVERAGE (%) — show avg label
+                  const avgCols = ['vcr','cpm'];
+
+                  let cellVal = '';
+                  let cellColor = '#475569';
+                  let cellWeight = 400;
+                  let cellLabel = null;
+
+                  if (i === 0) {
+                    cellVal = `TOTAL (${filteredRows.length} rows)`;
+                    cellColor = '#94a3b8';
+                    cellWeight = 700;
+                  } else if (sumCols.includes(col.key) && totals[col.key] > 0) {
+                    cellVal = fmtCell(totals[col.key], col.fmt);
+                    cellColor = '#34d399';
+                    cellWeight = 700;
+                  } else if (col.key === 'vcr' && totals.vcr != null) {
+                    cellVal = fmtCell(totals.vcr, 'pct');
+                    cellLabel = 'avg';
+                    cellColor = '#a78bfa';
+                    cellWeight = 700;
+                  } else if (col.key === 'cpm' && totals.cpmAvg != null) {
+                    cellVal = fmtCell(totals.cpmAvg, 'num4');
+                    cellLabel = 'avg';
+                    cellColor = '#a78bfa';
+                    cellWeight = 700;
+                  }
+
                   return (
                     <td key={col.key} style={{
                       minWidth: col.w, padding: '5px 8px',
                       borderRight: '1px solid rgba(100,116,139,0.3)',
-                      color: showTotal ? '#34d399' : '#475569',
-                      fontWeight: showTotal ? 700 : 400, fontFamily: 'monospace',
+                      color: cellColor, fontWeight: cellWeight, fontFamily: 'monospace',
                       textAlign: col.fmt ? 'right' : 'left',
                       position: 'sticky', bottom: 0, zIndex: 5, background: '#0f172a',
+                      fontSize: 11,
                     }}>
-                      {i === 0 ? `TOTAL (${filteredRows.length} rows)` : showTotal ? fmtCell(totals[col.key], col.fmt) : ''}
+                      {cellVal}
+                      {cellLabel && <span style={{ fontSize: 9, color: '#7c3aed', marginLeft: 3, verticalAlign: 'super' }}>{cellLabel}</span>}
                     </td>
                   );
                 })}
