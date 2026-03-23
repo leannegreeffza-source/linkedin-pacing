@@ -43,7 +43,7 @@ function lastMonthEnd()   { const d = new Date(); return toYMD(new Date(d.getFul
 
 function fmtCell(val, fmt) {
   if (val == null || val === '') return '';
-  if (fmt === 'num4') return Number(val).toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+  if (fmt === 'num4') return '$' + Number(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (fmt === 'int')  return Number(val).toLocaleString('en-US');
   if (fmt === 'pct')  return `${(Number(val) * 100).toFixed(2)}%`;
   return String(val);
@@ -228,7 +228,7 @@ async function exportDiageoTemplate(rows, selectedWeeks, selectedBrands, customC
   // Data rows — number formatting
   // Col 7 = Net Spend ($), col 22 = CPM ($) — must use dollar format
   const fmtMap = {
-    7:  '"$"#,##0.0000',   // Net Spend — dollar, 4dp
+    7:  '"$"#,##0.00',    // Net Spend — dollar, 2dp
     8:  '#,##0',            // Impressions
     9:  '#,##0',            // Clicks
     10: '#,##0',            // Engagements
@@ -281,7 +281,7 @@ async function exportDiageoTemplate(rows, selectedWeeks, selectedBrands, customC
     const r1 = R + 1; // Excel is 1-indexed
     // CPM = Net Spend / (Impressions / 1000)
     const cpmCell = XLSX.utils.encode_cell({ r: R, c: 22 });
-    ws[cpmCell] = { f: `IFERROR(H${r1}/(I${r1}/1000),0)`, t: 'n', z: '"$"#,##0.0000' };
+    ws[cpmCell] = { f: `IFERROR(H${r1}/(I${r1}/1000),0)`, t: 'n', z: '"$"#,##0.00' };
     // Campaign underscore counter
     const cucCell = XLSX.utils.encode_cell({ r: R, c: 23 });
     ws[cucCell] = { f: `LEN(D${r1})-LEN(SUBSTITUTE(D${r1},"_",""))`, t: 'n' };
@@ -351,7 +351,7 @@ async function exportExcel(rows) {
     COLS.forEach((col, C) => {
       const addr = XLSX.utils.encode_cell({ r: R, c: C });
       if (!ws[addr]) return;
-      if (col.fmt === 'num4') ws[addr].z = '0.0000';
+      if (col.fmt === 'num4') ws[addr].z = '"$"#,##0.00';
       if (col.fmt === 'int')  ws[addr].z = '#,##0';
       if (col.fmt === 'pct')  ws[addr].z = '0.00%';
     });
@@ -534,7 +534,7 @@ export default function KenyaTab() {
   const filteredRows  = rows.filter(r => !tableSearch || [r.campaignName, r.placementName, r.date].some(v => v && String(v).toLowerCase().includes(tableSearch.toLowerCase())));
   const totals        = computeTotals(filteredRows);
   const ctr           = totals.impressions > 0 ? ((totals.clicks / totals.impressions) * 100).toFixed(2) : '0.00';
-  const cpmAvg        = totals.impressions > 0 ? ((totals.netSpend / totals.impressions) * 1000).toFixed(4) : '0.0000';
+  const cpmAvg        = totals.impressions > 0 ? ((totals.netSpend / totals.impressions) * 1000).toFixed(2) : '0.00';
   const filteredCamps = campaigns.filter(c => !campSearch || c.name.toLowerCase().includes(campSearch.toLowerCase()));
   const filteredAccts = accounts.filter(a => !acctSearch || a.name.toLowerCase().includes(acctSearch.toLowerCase()) || String(a.id).includes(acctSearch));
   const today         = new Date();
