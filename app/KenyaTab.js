@@ -5,7 +5,7 @@ import { useSession } from 'next-auth/react';
 import {
   RefreshCw, FileSpreadsheet, Calendar, AlertCircle,
   FileDown, Table2, ChevronDown, Check, Search, X,
-  Users, BarChart2, Info
+  Users, BarChart2, Info, BookTemplate
 } from 'lucide-react';
 
 const COLS = [
@@ -57,6 +57,232 @@ async function loadXLSX() {
     s.onload = () => res(window.XLSX); s.onerror = rej;
     document.head.appendChild(s);
   });
+}
+
+// ── Diageo brand taxonomy ──────────────────────────────────────────────────
+// Brand name is the 6th segment of campaign name split by |
+// e.g. STO-306|SN|Saracen|Diageo|LI|Singleton_Q3... → "Singleton"
+const BRAND_TAXONOMY = {
+  'Singleton':    '123',
+  'Johnnie Walker': '124',
+  'JW':           '124',
+  'Johnniewalker':'124',
+  'Whitecap':     '125',
+  'Don Julio':    '126',
+  'DonJulio':     '126',
+  'Baileys':      '127',
+  'Smirnoff':     '128',
+  'Tanqueray':    '129',
+  'Gordons':      '130',
+  'Gordon':       '130',
+  'Captain Morgan':'131',
+  'Tusker':       '132',
+  'Senator':      '133',
+  'Chrome':       '134',
+};
+
+function getBrand(campaignName) {
+  // Split by | and take 6th segment (index 5), then take part before first _
+  const parts = (campaignName || '').split('|');
+  if (parts.length < 6) return null;
+  return parts[5].split('_')[0].trim();
+}
+
+function getTaxonomyCode(brand, customCodes) {
+  if (!brand) return '';
+  const key = Object.keys({ ...BRAND_TAXONOMY, ...customCodes }).find(
+    k => k.toLowerCase() === brand.toLowerCase()
+  );
+  return key ? ({ ...BRAND_TAXONOMY, ...customCodes })[key] : '';
+}
+
+function getWeeksInData(rows) {
+  // Returns list of week ranges (Mon–Sun) covering the data dates
+  const dates = rows
+    .map(r => { const [m,d,y] = r.date.split('/'); return new Date(`${y}-${m}-${d}`); })
+    .filter(d => !isNaN(d))
+    .sort((a,b) => a-b);
+  if (!dates.length) return [];
+  const weeks = [];
+  const seen = new Set();
+  for (const d of dates) {
+    const dow  = d.getDay(); // 0=Sun
+    const mon  = new Date(d); mon.setDate(d.getDate() - ((dow + 6) % 7));
+    const sun  = new Date(mon); sun.setDate(mon.getDate() + 6);
+    const key  = mon.toISOString().slice(0,10);
+    if (!seen.has(key)) {
+      seen.add(key);
+      const fmt = dt => `${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getDate()).padStart(2,'0')}/${dt.getFullYear()}`;
+      weeks.push({ key, label: `${fmt(mon)} – ${fmt(sun)}`, start: mon, end: sun });
+    }
+  }
+  return weeks;
+}
+
+async function exportDiageoTemplate(rows, selectedWeeks, selectedBrands, customCodes) {
+  const XLSX = await loadXLSX();
+  const today = new Date();
+  const tag   = `${String(today.getFullYear()).slice(2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+
+  // Filter rows by selected weeks and brands
+  let filtered = rows.filter(r => {
+    const [m,d,y] = r.date.split('/');
+    const dt = new Date(`${y}-${m}-${d}`);
+    const inWeek = selectedWeeks.length === 0 || selectedWeeks.some(w => dt >= w.start && dt <= w.end);
+    const brand  = getBrand(r.campaignName);
+    const inBrand = selectedBrands.length === 0 || selectedBrands.includes(brand);
+    return inWeek && inBrand;
+  });
+
+  // Build rows with taxonomy prefix on campaign/placement name
+  const dataRows = filtered.map(r => {
+    const brand = getBrand(r.campaignName);
+    const code  = getTaxonomyCode(brand, customCodes);
+    const prefix = code ? `${code}_` : '';
+    return [
+      r.date,
+      r.currency || 'USD',
+      r.siteName  || 'LinkedIn',
+      prefix + (r.campaignName  || ''),
+      prefix + (r.placementName || ''),
+      r.packageName  || null,
+      r.creativeName || null,
+      r.netSpend    != null ? r.netSpend    : null,
+      r.impressions != null ? r.impressions : null,
+      r.clicks      != null ? r.clicks      : null,
+      r.engagements != null ? r.engagements : null,
+      r.videoViews  != null ? r.videoViews  : null,
+      r.videoStarts != null ? r.videoStarts : null,
+      r.video3sec   != null ? r.video3sec   : null,
+      r.video25     != null ? r.video25     : null,
+      r.video50     != null ? r.video50     : null,
+      r.video75     != null ? r.video75     : null,
+      r.video100    != null ? r.video100    : null,
+      r.vcr         != null ? r.vcr         : null,
+      r.appDownloads != null ? r.appDownloads : null,
+      r.custom1     != null ? r.custom1     : null,
+      r.custom2     != null ? r.custom2     : null,
+    ];
+  });
+
+  const HEADERS = [
+    'Date','Currency Spend is Entered In','Site Name','Campaign Name','Placement Name',
+    'Package Name','Creative Name','Net Spend','Impressions','Clicks','Engagements',
+    'Video Views','Video Starts','Video 3 Sec View','Video Complete (25%)','Video Complete (50%)',
+    'Video Complete (75%)','Video Complete (100%)','Video Completion Rate (VCR)',
+    'App Downloads','Custom Performance Metric 1','Custom Performance Metric 2',
+  ];
+
+  const INSTR = [
+    'Data must be broken out by day (daily break down). No ranges in the Date field.\nMM/DD/YYYYY',
+    'Required (Should align with the taxonomy currency code)',
+    'Please include your publisher or site name',
+    'There should be no extra white spaces in campaign and placement name. Please use our taxonomy for campaign and placement name.',
+    'There should be no extra white spaces in campaign and placement name. Please use our taxonomy for campaign and placement name.',
+    'If available','If available','Required','Required','If applicable',
+    'If bought on CPE/CPV, Engagements & Views MUST be provided',
+    'If bought on CPE/CPV, Engagements & Views MUST be provided',
+    'If bought on CPE/CPV, Engagements & Views MUST be provided',
+    'If bought on CPE/CPV, Engagements & Views MUST be provided',
+    'If bought on CPE/CPV, Engagements & Views MUST be provided',
+    'If bought on CPE/CPV, Engagements & Views MUST be provided',
+    'If bought on CPE/CPV, Engagements & Views MUST be provided',
+    'If bought on CPE/CPV, Engagements & Views MUST be provided',
+    'If bought on CPE/CPV, Engagements & Views MUST be provided',
+    'If applicable','If applicable','If applicable',
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet([INSTR, HEADERS, ...dataRows]);
+
+  // Column widths
+  const colWidths = [12,28,14,60,60,18,18,12,14,10,14,12,12,16,20,20,20,20,24,14,26,26];
+  ws['!cols'] = colWidths.map(w => ({ wch: w }));
+
+  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+
+  // Row 1: instruction row — yellow fill, black bold text
+  for (let C = 0; C <= 21; C++) {
+    const addr = XLSX.utils.encode_cell({ r: 0, c: C });
+    if (!ws[addr]) ws[addr] = { v: '', t: 's' };
+    ws[addr].s = {
+      font: { bold: true, color: { rgb: 'FF000000' } },
+      fill: { patternType: 'solid', fgColor: { rgb: 'FFE598' } },
+      alignment: { wrapText: true, vertical: 'top' },
+    };
+  }
+
+  // Row 2: header row — grey fill, bold black text
+  for (let C = 0; C <= 21; C++) {
+    const addr = XLSX.utils.encode_cell({ r: 1, c: C });
+    if (!ws[addr]) continue;
+    ws[addr].s = {
+      font:  { bold: true, color: { rgb: 'FF000000' } },
+      fill:  { patternType: 'solid', fgColor: { rgb: 'C0C0C0' } },
+      alignment: { horizontal: 'center', wrapText: true },
+      border: {
+        bottom: { style: 'medium', color: { rgb: 'FF000000' } },
+      },
+    };
+  }
+
+  // Data rows — number formatting
+  for (let R = 2; R <= range.e.r; R++) {
+    const fmtMap = { 7:'0.0000', 8:'#,##0', 9:'#,##0', 10:'#,##0', 11:'#,##0',
+                     12:'#,##0', 13:'#,##0', 14:'#,##0', 15:'#,##0', 16:'#,##0',
+                     17:'#,##0', 18:'#,##0', 19:'0.00%', 20:'#,##0' };
+    for (let C = 0; C <= 21; C++) {
+      const addr = XLSX.utils.encode_cell({ r: R, c: C });
+      if (!ws[addr]) continue;
+      if (fmtMap[C]) ws[addr].z = fmtMap[C];
+      // Alternate row shading
+      if (R % 2 === 0) {
+        ws[addr].s = { fill: { patternType: 'solid', fgColor: { rgb: 'F2F2F2' } } };
+      }
+    }
+  }
+
+  // Add CPM formula column (W = col 22) with red header like template
+  const cpmHeader = XLSX.utils.encode_cell({ r: 1, c: 22 });
+  ws[cpmHeader] = { v: 'CPM', t: 's', s: {
+    font:  { bold: true, color: { rgb: 'FF000000' } },
+    fill:  { patternType: 'solid', fgColor: { rgb: 'FF0000' } },
+    alignment: { horizontal: 'center' },
+  }};
+  // Campaign Underscore Counter (col 23) — red
+  const cuc = XLSX.utils.encode_cell({ r: 1, c: 23 });
+  ws[cuc] = { v: 'Campaign Underscore Counter', t: 's', s: {
+    font:  { bold: true, color: { rgb: 'FF000000' } },
+    fill:  { patternType: 'solid', fgColor: { rgb: 'FF0000' } },
+    alignment: { horizontal: 'center', wrapText: true },
+  }};
+  // Placement Underscore Counter (col 24)
+  const puc = XLSX.utils.encode_cell({ r: 1, c: 24 });
+  ws[puc] = { v: 'Placement Underscore Counter', t: 's', s: {
+    font:  { bold: true, color: { rgb: 'FF000000' } },
+    fill:  { patternType: 'solid', fgColor: { rgb: 'FF0000' } },
+    alignment: { horizontal: 'center', wrapText: true },
+  }};
+
+  // Add formulas for CPM, underscore counters for each data row
+  for (let R = 2; R <= range.e.r; R++) {
+    const r1 = R + 1; // Excel is 1-indexed
+    // CPM = Net Spend / (Impressions / 1000)
+    const cpmCell = XLSX.utils.encode_cell({ r: R, c: 22 });
+    ws[cpmCell] = { f: `IFERROR(H${r1}/(I${r1}/1000),0)`, t: 'n', z: '0.0000' };
+    // Campaign underscore counter
+    const cucCell = XLSX.utils.encode_cell({ r: R, c: 23 });
+    ws[cucCell] = { f: `LEN(D${r1})-LEN(SUBSTITUTE(D${r1},"_",""))`, t: 'n' };
+    // Placement underscore counter
+    const pucCell = XLSX.utils.encode_cell({ r: R, c: 24 });
+    ws[pucCell] = { f: `LEN(E${r1})-LEN(SUBSTITUTE(E${r1},"_",""))`, t: 'n' };
+  }
+
+  // Update range to include the 3 extra formula cols
+  ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: range.e.r, c: 24 } });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Data Capture');
+  XLSX.writeFile(wb, `Diageo_LinkedIn_${tag}.xlsx`);
 }
 
 async function exportExcel(rows) {
@@ -189,6 +415,11 @@ export default function KenyaTab() {
   const [progress,    setProgress]    = useState({ pct: 0, message: '', processed: 0, total: 0, rowsSoFar: 0 });
   const [tableSearch, setTableSearch] = useState('');
   const [showColInfo,  setShowColInfo]  = useState(false);
+  const [showDiageo,   setShowDiageo]   = useState(false);
+  const [diageoWeeks,  setDiageoWeeks]  = useState([]);    // selected week keys
+  const [diageoB,      setDiageoB]      = useState([]);    // selected brand names
+  const [customCodes,  setCustomCodes]  = useState({});    // user-editable brand→code map
+  const [editingCode,  setEditingCode]  = useState(null);  // brand being edited
 
   const acctMenuRef = useRef();
   const campMenuRef = useRef();
@@ -419,7 +650,153 @@ export default function KenyaTab() {
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showColInfo ? 'bg-indigo-700 border-indigo-600 text-white' : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'}`}>
           <Info className="w-3.5 h-3.5" /> Columns
         </button>
+
+        <button disabled={filteredRows.length === 0} onClick={() => { setShowDiageo(true); setDiageoWeeks([]); setDiageoB([]); }}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold disabled:opacity-40 transition-colors">
+          <FileSpreadsheet className="w-3.5 h-3.5" /> Diageo Template
+        </button>
       </div>
+
+      {/* ── DIAGEO TEMPLATE EXPORT MODAL ────────────────────────────────── */}
+      {showDiageo && (() => {
+        const allWeeks  = getWeeksInData(filteredRows);
+        // Extract unique brands from current rows
+        const allBrands = [...new Set(filteredRows.map(r => getBrand(r.campaignName)).filter(Boolean))].sort();
+        const selWeeks  = allWeeks.filter(w => diageoWeeks.includes(w.key));
+        const canExport = filteredRows.length > 0;
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+            <div className="bg-slate-800 border border-slate-600 rounded-2xl shadow-2xl w-[640px] max-h-[90vh] flex flex-col overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+                <div>
+                  <p className="text-sm font-bold text-white">Export Diageo Publisher Template</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Select week(s) and brand(s) — data will be filtered and formatted exactly to the Diageo FY26 template</p>
+                </div>
+                <button onClick={() => setShowDiageo(false)} className="text-slate-400 hover:text-white"><X className="w-4 h-4" /></button>
+              </div>
+
+              <div className="overflow-y-auto flex-1 px-5 py-4 space-y-5">
+
+                {/* ── Week Selector ── */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-bold text-slate-300 uppercase tracking-wider">Select Week(s)</p>
+                    <div className="flex gap-2">
+                      <button onClick={() => setDiageoWeeks(allWeeks.map(w => w.key))} className="text-xs text-blue-400 hover:text-blue-300">All</button>
+                      <span className="text-slate-600">·</span>
+                      <button onClick={() => setDiageoWeeks([])} className="text-xs text-slate-400 hover:text-white">Clear</button>
+                    </div>
+                  </div>
+                  {allWeeks.length === 0
+                    ? <p className="text-xs text-slate-500 italic">No weeks detected — pull data first</p>
+                    : <div className="grid grid-cols-2 gap-1.5">
+                        {allWeeks.map(w => {
+                          const sel = diageoWeeks.includes(w.key);
+                          const cnt = filteredRows.filter(r => { const [m,d,y]=r.date.split('/'); const dt=new Date(`${y}-${m}-${d}`); return dt>=w.start&&dt<=w.end; }).length;
+                          return (
+                            <button key={w.key} onClick={() => setDiageoWeeks(prev => sel ? prev.filter(k=>k!==w.key) : [...prev, w.key])}
+                              className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs border transition-colors ${sel ? 'bg-blue-700 border-blue-600 text-white' : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'}`}>
+                              <span>{w.label}</span>
+                              <span className={`font-mono text-xs ${sel ? 'text-blue-200' : 'text-slate-500'}`}>{cnt} rows</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                  }
+                </div>
+
+                {/* ── Brand Selector ── */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-bold text-slate-300 uppercase tracking-wider">Select Brand(s)</p>
+                    <div className="flex gap-2">
+                      <button onClick={() => setDiageoB([...allBrands])} className="text-xs text-blue-400 hover:text-blue-300">All</button>
+                      <span className="text-slate-600">·</span>
+                      <button onClick={() => setDiageoB([])} className="text-xs text-slate-400 hover:text-white">Clear</button>
+                    </div>
+                  </div>
+                  {allBrands.length === 0
+                    ? <p className="text-xs text-slate-500 italic">No brands detected in campaign names</p>
+                    : <div className="grid grid-cols-3 gap-1.5">
+                        {allBrands.map(brand => {
+                          const sel  = diageoB.includes(brand);
+                          const code = customCodes[brand] || BRAND_TAXONOMY[brand] || '';
+                          return (
+                            <div key={brand} className={`rounded-lg border transition-colors ${sel ? 'bg-emerald-900/40 border-emerald-700' : 'bg-slate-700 border-slate-600'}`}>
+                              <button onClick={() => setDiageoB(prev => sel ? prev.filter(b=>b!==brand) : [...prev, brand])}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-left">
+                                <div className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center ${sel ? 'bg-emerald-500 border-emerald-500' : 'border-slate-500'}`}>
+                                  {sel && <Check className="w-2.5 h-2.5 text-white" />}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-semibold text-white truncate">{brand}</p>
+                                  {editingCode === brand
+                                    ? <input
+                                        autoFocus
+                                        defaultValue={code}
+                                        className="w-full text-xs bg-slate-600 border border-blue-500 rounded px-1 py-0.5 text-white font-mono focus:outline-none mt-0.5"
+                                        onBlur={e => { setCustomCodes(p=>({...p,[brand]:e.target.value.trim()})); setEditingCode(null); }}
+                                        onKeyDown={e => { if(e.key==='Enter'||e.key==='Escape'){setCustomCodes(p=>({...p,[brand]:e.target.value.trim()}));setEditingCode(null);}}}
+                                        onClick={e => e.stopPropagation()}
+                                      />
+                                    : <p className="text-xs text-slate-400 font-mono mt-0.5 flex items-center gap-1">
+                                        Code: <span className={`${code ? 'text-yellow-400' : 'text-slate-600'}`}>{code || '—'}</span>
+                                        <button onClick={e=>{e.stopPropagation();setEditingCode(brand);}} className="text-slate-500 hover:text-blue-400 ml-1 text-xs">✏️</button>
+                                      </p>
+                                  }
+                                </div>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                  }
+                  <p className="text-xs text-slate-500 mt-2">Click ✏️ to set/edit the taxonomy code for a brand. The code will be prefixed to campaign and placement names: <span className="text-yellow-400 font-mono">123_STO-306|SN|...</span></p>
+                </div>
+
+                {/* ── Summary ── */}
+                <div className="bg-slate-700/50 rounded-lg px-4 py-3 text-xs text-slate-400 space-y-1">
+                  {(() => {
+                    const wSel = diageoWeeks.length === 0 ? allWeeks : allWeeks.filter(w => diageoWeeks.includes(w.key));
+                    const exportRows = filteredRows.filter(r => {
+                      const [m,d,y]=r.date.split('/'); const dt=new Date(`${y}-${m}-${d}`);
+                      const inW = wSel.length===0||wSel.some(w=>dt>=w.start&&dt<=w.end);
+                      const brand=getBrand(r.campaignName);
+                      const inB = diageoB.length===0||diageoB.includes(brand);
+                      return inW && inB;
+                    });
+                    return (
+                      <>
+                        <p><span className="text-white font-semibold">{exportRows.length}</span> rows will be exported</p>
+                        <p>Weeks: <span className="text-white">{diageoWeeks.length === 0 ? 'All' : diageoWeeks.length}</span> · Brands: <span className="text-white">{diageoB.length === 0 ? 'All' : diageoB.join(', ')}</span></p>
+                        <p className="text-slate-500">File: <span className="font-mono text-slate-300">Diageo_LinkedIn_{(() => { const t=new Date(); return `${String(t.getFullYear()).slice(2)}${String(t.getMonth()+1).padStart(2,'0')}${String(t.getDate()).padStart(2,'0')}`; })()}.xlsx</span></p>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-slate-700 shrink-0">
+                <button onClick={() => setShowDiageo(false)} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs font-semibold">Cancel</button>
+                <button
+                  disabled={!canExport}
+                  onClick={() => {
+                    const wSel = diageoWeeks.length === 0 ? allWeeks : allWeeks.filter(w => diageoWeeks.includes(w.key));
+                    const bSel = diageoB.length === 0 ? allBrands : diageoB;
+                    exportDiageoTemplate(filteredRows, wSel, bSel, customCodes);
+                    setShowDiageo(false);
+                  }}
+                  className="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold disabled:opacity-40 transition-colors flex items-center gap-2">
+                  <FileSpreadsheet className="w-3.5 h-3.5" /> Export Diageo Template
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* COLUMN SUMMARY PANEL */}
       {showColInfo && (
