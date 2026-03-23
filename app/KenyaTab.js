@@ -226,18 +226,31 @@ async function exportDiageoTemplate(rows, selectedWeeks, selectedBrands, customC
   }
 
   // Data rows — number formatting
+  // Col 7 = Net Spend ($), col 22 = CPM ($) — must use dollar format
+  const fmtMap = {
+    7:  '"$"#,##0.0000',   // Net Spend — dollar, 4dp
+    8:  '#,##0',            // Impressions
+    9:  '#,##0',            // Clicks
+    10: '#,##0',            // Engagements
+    11: '#,##0',            // Video Views
+    12: '#,##0',            // Video Starts
+    13: '#,##0',            // Video 3 Sec
+    14: '#,##0',            // Video 25%
+    15: '#,##0',            // Video 50%
+    16: '#,##0',            // Video 75%
+    17: '#,##0',            // Video 100%
+    18: '0.00%',            // VCR
+    19: '#,##0',            // App Downloads
+  };
   for (let R = 2; R <= range.e.r; R++) {
-    const fmtMap = { 7:'0.0000', 8:'#,##0', 9:'#,##0', 10:'#,##0', 11:'#,##0',
-                     12:'#,##0', 13:'#,##0', 14:'#,##0', 15:'#,##0', 16:'#,##0',
-                     17:'#,##0', 18:'#,##0', 19:'0.00%', 20:'#,##0' };
     for (let C = 0; C <= 21; C++) {
       const addr = XLSX.utils.encode_cell({ r: R, c: C });
       if (!ws[addr]) continue;
-      if (fmtMap[C]) ws[addr].z = fmtMap[C];
-      // Alternate row shading
-      if (R % 2 === 0) {
-        ws[addr].s = { fill: { patternType: 'solid', fgColor: { rgb: 'F2F2F2' } } };
-      }
+      // Apply format AND preserve alternating row fill together
+      const fmt  = fmtMap[C];
+      const fill = R % 2 === 0 ? { patternType: 'solid', fgColor: { rgb: 'F2F2F2' } } : undefined;
+      ws[addr].s = fill ? { fill } : {};
+      if (fmt) ws[addr].z = fmt;
     }
   }
 
@@ -268,7 +281,7 @@ async function exportDiageoTemplate(rows, selectedWeeks, selectedBrands, customC
     const r1 = R + 1; // Excel is 1-indexed
     // CPM = Net Spend / (Impressions / 1000)
     const cpmCell = XLSX.utils.encode_cell({ r: R, c: 22 });
-    ws[cpmCell] = { f: `IFERROR(H${r1}/(I${r1}/1000),0)`, t: 'n', z: '0.0000' };
+    ws[cpmCell] = { f: `IFERROR(H${r1}/(I${r1}/1000),0)`, t: 'n', z: '"$"#,##0.0000' };
     // Campaign underscore counter
     const cucCell = XLSX.utils.encode_cell({ r: R, c: 23 });
     ws[cucCell] = { f: `LEN(D${r1})-LEN(SUBSTITUTE(D${r1},"_",""))`, t: 'n' };
