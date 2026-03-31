@@ -306,17 +306,31 @@ async function parseRefExcel(file) {
 }
 
 function applyRef(rawRows, ref) {
+  if (!ref || (!ref.byAccGrp && !ref.byAcc)) return rawRows;
   return rawRows.map(r => {
-    const key = `${r.accountId}_${r.campaignGroupId}`;
-    const d = ref.byAccGrp?.[key] || ref.byAcc?.[String(r.accountId)] || {};
+    const accStr = String(r.accountId);
+    const grpStr = String(r.campaignGroupId || '0');
+    // Match priority:
+    // 1. Exact account + group
+    // 2. Account + group '0' (ref rows where group was blank)
+    // 3. Account only (byAcc fallback)
+    const d =
+      ref.byAccGrp?.[`${accStr}_${grpStr}`] ||
+      ref.byAccGrp?.[`${accStr}_0`]         ||
+      ref.byAcc?.[accStr]                   || {};
     return {
       ...r,
-      category: d.category||r.category||'', io: d.io||r.io||'',
-      staffCode: d.staffCode||r.staffCode||'', billingAgency: d.billingAgency||r.billingAgency||'',
-      bookingAgency: d.bookingAgency||r.bookingAgency||'', advertiser: d.advertiser||r.advertiser||'',
-      industry: d.industry||r.industry||'', ciNumber: d.poNumber||r.ciNumber||'',
-      pmfPercentage: d.pmfPercentage != null ? d.pmfPercentage : (r.pmfPercentage || 0),
-      specialNotes: d.specialNotes||r.specialNotes||'',
+      io:            d.io            || r.io            || '',
+      staffCode:     d.staffCode     || r.staffCode     || '',
+      billingAgency: d.billingAgency || r.billingAgency || '',
+      bookingAgency: d.bookingAgency || r.bookingAgency || '',
+      advertiser:    d.advertiser    || r.advertiser    || '',
+      industry:      d.industry      || r.industry      || '',
+      ciNumber:      d.poNumber      || r.ciNumber      || '',
+      category:      d.category      || r.category      || '',
+      pmfPercentage: (d.pmfPercentage != null && d.pmfPercentage !== '') ? d.pmfPercentage : (r.pmfPercentage || 0),
+      specialNotes:  d.specialNotes  || r.specialNotes  || '',
+      partner:       r.partner       || 'LinkedIn',
     };
   });
 }
@@ -471,8 +485,14 @@ export default function BODTab() {
 
   // ── Persist settings ─────────────────────────────────────────────────────────
   useEffect(() => {
-    const savedRef = lsGet('bod_ref_data_v1', null);
-    if (savedRef) { setRef(savedRef); setRefCount(Object.keys(savedRef.byAccGrp || {}).length); setRefSource('uploaded'); }
+    // Restore ref data: window var (fastest) → localStorage → none
+    const savedRef = window.__bodRef || lsGet('bod_ref_data_v1', null);
+    if (savedRef && (savedRef.byAccGrp || savedRef.byAcc)) {
+      window.__bodRef = savedRef; // ensure window var is set
+      setRef(savedRef);
+      setRefCount(Object.keys(savedRef.byAccGrp || {}).length);
+      setRefSource('uploaded');
+    }
     setExcludedIds(lsGet('bod_excluded_ids', []));
   }, []);
 
@@ -578,8 +598,9 @@ export default function BODTab() {
       // ── Step 2: Enrich spend rows using the BOD reference sheet ────────────
       // The ref sheet fills: IO, Staff Code, Billing Agency, Booking Agency,
       // Advertiser, Industry, CI#, Category, PMF%, Special Notes
-      // Match priority: exact account+campaignGroup → account only
-      const enriched = applyRef(finalRows, ref);
+      // Use the most current ref data available (state may lag behind window var)
+      const activeRef = window.__bodRef || ref;
+      const enriched  = applyRef(finalRows, activeRef);
 
       setRows(enriched);
       setLastRefresh(new Date());
@@ -614,18 +635,27 @@ export default function BODTab() {
     e.target.value = '';
   }
 
-  // ── Upload Reference sheet (all-accounts mode) ────────────────────
+  // ── Upload Reference sheet ───────────────────────────────────────
   async function handleRefUpload(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
       const parsed = await parseRefExcel(file);
-      setRef(parsed); setRefCount(Object.keys(parsed.byAccGrp || {}).length);
+      const entryCount = Object.keys(parsed.byAccGrp || {}).length;
+      const accCount   = Object.keys(parsed.byAcc    || {}).length;
+      setRef(parsed);
+      setRefCount(entryCount);
       setRefSource('uploaded');
-      lsSet('bod_ref_data_v1', parsed);
-      setRows(prev => applyRef(prev, parsed));
-      alert(`✅ Reference data loaded from "${parsed.sheetName}"\n${parsed.rowCount} rows → ${Object.keys(parsed.byAccGrp).length} unique account+group entries`);
-    } catch (err) { alert('❌ ' + err.message); }
+      // Try localStorage — may fail silently for large files
+      try { localStorage.setItem('bod_ref_data_v1', JSON.stringify(parsed)); } catch {}
+      // Also keep in memory via window so it survives re-renders
+      window.__bodRef = parsed;
+      // Re-enrich any already-loaded rows immediately
+      if (rows.length > 0) setRows(prev => applyRef(prev, parsed));
+      // Trigger a fresh load to get fully enriched data
+      else loadBOD();
+      alert(`✅ Ref sheet loaded: "${parsed.sheetName}"\n${parsed.rowCount} rows parsed\n${entryCount} account+group keys · ${accCount} unique accounts`);
+    } catch (err) { alert('❌ Failed to parse ref sheet:\n' + err.message); }
     e.target.value = '';
   }
 
