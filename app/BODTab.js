@@ -593,19 +593,8 @@ export default function BODTab() {
             if (msg.phase === 1) {
               setProgress(p => ({
                 ...p, phase: 1,
-                message: msg.done
-                  ? `✓ Found ${msg.spendingCount} accounts with spend (of ${msg.totalCount} checked)`
-                  : 'Phase 1: Scanning all accounts for spend…',
-                spendingCount: msg.spendingCount ?? p.spendingCount,
-                totalCount:    msg.totalCount    ?? p.totalCount,
-                pct: msg.done ? 50 : 15,
-              }));
-            }
-            if (msg.phase === 2) {
-              setProgress(p => ({
-                ...p, phase: 2,
-                message: `Phase 2: Fetching campaign detail (${msg.processed}/${msg.total} accounts, ${msg.rowsSoFar} rows…)`,
-                pct: 50 + Math.round((msg.progress || 0) / 2),
+                message: msg.message || 'Fetching spend…',
+                pct:     msg.pct    ?? p.pct,
                 rowsSoFar: msg.rowsSoFar ?? p.rowsSoFar,
               }));
             }
