@@ -1010,7 +1010,6 @@ export default function BODTab() {
               </div>
             )}
           </div>
-        )}
 
         {/* Hidden BOD list file input */}
         <input type="file" ref={bodFileRef} accept=".xlsx,.xls" className="hidden" onChange={handleBODUpload} />
