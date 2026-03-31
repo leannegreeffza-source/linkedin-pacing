@@ -504,9 +504,9 @@ export default function BODTab() {
   // ── refSource: tracks whether ref sheet has been uploaded ───────────────────
   const [refSource, setRefSource] = useState('none'); // 'none' | 'uploaded'
 
-  // ── 4 report sub-tabs ────────────────────────────────────────────────────────
-  const REPORT_TABS = ['BOD', 'BOI', 'BUF', 'Self-Managed'];
-  const [activeReportTab, setActiveReportTab] = useState('BOD');
+  // ── 5 report tabs: All Spend + 4 split tabs ─────────────────────────────────
+  const REPORT_TABS = ['All Spend', 'BOD', 'BOI', 'BUF', 'Self-Managed'];
+  const [activeReportTab, setActiveReportTab] = useState('All Spend');
 
   // ── Persist settings ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -707,23 +707,29 @@ export default function BODTab() {
   ];
 
   // ── Derived display data ──────────────────────────────────────────
-  // Filter: exclusions + active report tab
-  // Rows with no reportTab (ref not uploaded yet) fall into 'BOD' tab by default
-  const activeRows = rows.filter(r => {
-    if (BUILTIN_EXCLUDED_IDS.has(String(r.accountId))) return false;
-    if (excludedIds.includes(String(r.accountId)))      return false;
-    // Tab filter — rows without a tab assigned show in BOD
-    const tab = r.reportTab || 'BOD';
-    return tab === activeReportTab;
-  });
+  // 'All Spend' tab shows every row (exclusions still applied).
+  // The 4 sub-tabs filter by the reportTab field set from the BOD ref sheet:
+  //   BOD = billingType BOD + Managed
+  //   BOI = billingType BOI
+  //   BUF = billingType BUF
+  //   Self-Managed = billingType BOD + Self-Managed
 
-  // Count rows per tab for the tab badges
-  const tabCounts = { BOD: 0, BOI: 0, BUF: 0, 'Self-Managed': 0 };
+  // Count per tab (for badges) — always count all non-excluded rows
+  const tabCounts = { 'All Spend': 0, BOD: 0, BOI: 0, BUF: 0, 'Self-Managed': 0 };
   rows.forEach(r => {
     if (BUILTIN_EXCLUDED_IDS.has(String(r.accountId))) return;
     if (excludedIds.includes(String(r.accountId)))      return;
+    tabCounts['All Spend']++;
     const tab = r.reportTab || 'BOD';
     if (tabCounts[tab] != null) tabCounts[tab]++;
+  });
+
+  const activeRows = rows.filter(r => {
+    if (BUILTIN_EXCLUDED_IDS.has(String(r.accountId))) return false;
+    if (excludedIds.includes(String(r.accountId)))      return false;
+    if (activeReportTab === 'All Spend') return true;          // show everything
+    const tab = r.reportTab || 'BOD';
+    return tab === activeReportTab;
   });
 
   const filteredRows = activeRows.filter(r => {
@@ -756,12 +762,13 @@ export default function BODTab() {
       {/* ══ TOP TOOLBAR ══ */}
       <div className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center gap-2 flex-wrap shrink-0">
 
-        {/* 4 Report Tabs */}
+        {/* 5 Report Tabs: All Spend + BOD + BOI + BUF + Self-Managed */}
         <div className="flex items-center bg-slate-900 rounded-lg p-0.5 gap-0.5">
           {REPORT_TABS.map(tab => {
             const count = tabCounts[tab] || 0;
             const isActive = activeReportTab === tab;
             const tabColors = {
+              'All Spend':    isActive ? 'bg-slate-500 text-white'   : 'text-slate-400 hover:text-white',
               'BOD':          isActive ? 'bg-blue-600 text-white'    : 'text-slate-400 hover:text-white',
               'BOI':          isActive ? 'bg-purple-600 text-white'  : 'text-slate-400 hover:text-white',
               'BUF':          isActive ? 'bg-amber-600 text-white'   : 'text-slate-400 hover:text-white',
