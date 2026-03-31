@@ -281,6 +281,11 @@ async function parseRefExcel(file) {
             if (pmf > 1) pmf = pmf / 100; // convert 8 → 0.08
           }
           const s = v => (v != null && v !== '') ? String(v).trim() : '';
+          // Billing type (col 3): BOD / COD / Make Good
+          const billingType = s(r[3]);
+          // Managed type (col 10): Managed / Self-Managed / Self Managed
+          const managedRaw  = s(r[10]);
+          const managedType = managedRaw.toLowerCase().includes('self') ? 'Self-Managed' : managedRaw || '';
           const entry = {
             io:            s(r[2]),
             staffCode:     s(r[4]),
@@ -292,6 +297,8 @@ async function parseRefExcel(file) {
             category:      s(r[13]),
             pmfPercentage: pmf,
             specialNotes:  s(r[17]),
+            billingType,
+            managedType,
           };
           const key = `${acc}_${grp}`;
           if (!byAccGrp[key]) byAccGrp[key] = entry;
@@ -318,6 +325,16 @@ function applyRef(rawRows, ref) {
       ref.byAccGrp?.[`${accStr}_${grpStr}`] ||
       ref.byAccGrp?.[`${accStr}_0`]         ||
       ref.byAcc?.[accStr]                   || {};
+    // Determine which of the 4 report tabs this row belongs to
+    const btype = d.billingType || '';
+    const mtype = d.managedType || '';
+    let reportTab = 'Other';
+    if (btype === 'BOD' && mtype === 'Managed')      reportTab = 'BOD';
+    else if (btype === 'BOD' && mtype === 'Self-Managed') reportTab = 'Self-Managed';
+    else if (btype === 'BOU')                         reportTab = 'BOU';
+    else if (btype === 'Bill Up Front')               reportTab = 'Bill Up Front';
+    else if (btype === 'BOD')                         reportTab = 'BOD'; // BOD with no managed type → BOD
+
     return {
       ...r,
       io:            d.io            || r.io            || '',
@@ -331,12 +348,13 @@ function applyRef(rawRows, ref) {
       pmfPercentage: (d.pmfPercentage != null && d.pmfPercentage !== '') ? d.pmfPercentage : (r.pmfPercentage || 0),
       specialNotes:  d.specialNotes  || r.specialNotes  || '',
       partner:       r.partner       || 'LinkedIn',
+      reportTab,
     };
   });
 }
 
 // ─── Excel export ─────────────────────────────────────────────────────────────
-async function exportToExcel(rows, startDate, endDate) {
+async function exportToExcel(rows, startDate, endDate, tabName = 'BOD') {
   const XLSX = await loadXLSX();
   const wsData = [COLS.map(c => c.label)];
   rows.forEach(row => {
@@ -370,7 +388,7 @@ async function exportToExcel(rows, startDate, endDate) {
   const monthStr = startDate ? startDate.slice(0, 7).replace('-', '') : 'BOD';
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, `${monthStr} BOD with PMF`);
-  XLSX.writeFile(wb, `${monthStr}_BOD_with_PMF_${startDate}_to_${endDate}.xlsx`);
+  XLSX.writeFile(wb, `${monthStr}_${tabName.replace(' ','-')}_PMF_${startDate}_to_${endDate}.xlsx`);
 }
 
 // ─── AddCategoryRow — small form to add a new category+rate ─────────────────
@@ -482,6 +500,10 @@ export default function BODTab() {
 
   // ── refSource: tracks whether ref sheet has been uploaded ───────────────────
   const [refSource, setRefSource] = useState('none'); // 'none' | 'uploaded'
+
+  // ── 4 report sub-tabs ────────────────────────────────────────────────────────
+  const REPORT_TABS = ['BOD', 'Self-Managed', 'BOU', 'Bill Up Front'];
+  const [activeReportTab, setActiveReportTab] = useState('BOD');
 
   // ── Persist settings ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -682,12 +704,24 @@ export default function BODTab() {
   ];
 
   // ── Derived display data ──────────────────────────────────────────
-  // All rows already have exclusions applied at fetch time — filter display rows too
-  // in case manual exclusions were changed after load
-  const activeRows = rows.filter(r =>
-    !BUILTIN_EXCLUDED_IDS.has(String(r.accountId)) &&
-    !excludedIds.includes(String(r.accountId))
-  );
+  // Filter: exclusions + active report tab
+  // Rows with no reportTab (ref not uploaded yet) fall into 'BOD' tab by default
+  const activeRows = rows.filter(r => {
+    if (BUILTIN_EXCLUDED_IDS.has(String(r.accountId))) return false;
+    if (excludedIds.includes(String(r.accountId)))      return false;
+    // Tab filter — rows without a tab assigned show in BOD
+    const tab = r.reportTab || 'BOD';
+    return tab === activeReportTab;
+  });
+
+  // Count rows per tab for the tab badges
+  const tabCounts = { BOD: 0, 'Self-Managed': 0, BOU: 0, 'Bill Up Front': 0 };
+  rows.forEach(r => {
+    if (BUILTIN_EXCLUDED_IDS.has(String(r.accountId))) return;
+    if (excludedIds.includes(String(r.accountId)))      return;
+    const tab = r.reportTab || 'BOD';
+    if (tabCounts[tab] != null) tabCounts[tab]++;
+  });
 
   const filteredRows = activeRows.filter(r => {
     if (!search) return true;
@@ -719,19 +753,33 @@ export default function BODTab() {
       {/* ══ TOP TOOLBAR ══ */}
       <div className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center gap-2 flex-wrap shrink-0">
 
-        {/* Title + account count */}
-        <div className="flex items-center gap-2 mr-2">
-          <Users className="w-4 h-4 text-blue-400 shrink-0" />
-          <span className="text-sm font-bold text-white">BOD Report</span>
-          {!loadingAccs && allAccounts.length > 0 && (
-            <span className="text-xs text-slate-400 bg-slate-700 px-2 py-0.5 rounded-full">
-              {activeAccCount.toLocaleString()} accounts · {BUILTIN_EXCLUDED.length} auto-excluded
-            </span>
-          )}
+        {/* 4 Report Tabs */}
+        <div className="flex items-center bg-slate-900 rounded-lg p-0.5 gap-0.5">
+          {REPORT_TABS.map(tab => {
+            const count = tabCounts[tab] || 0;
+            const isActive = activeReportTab === tab;
+            const tabColors = {
+              'BOD':           isActive ? 'bg-blue-600 text-white'    : 'text-slate-400 hover:text-white',
+              'Self-Managed':  isActive ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white',
+              'BOU':           isActive ? 'bg-purple-600 text-white'  : 'text-slate-400 hover:text-white',
+              'Bill Up Front': isActive ? 'bg-amber-600 text-white'   : 'text-slate-400 hover:text-white',
+            };
+            return (
+              <button key={tab} onClick={() => setActiveReportTab(tab)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${tabColors[tab]}`}>
+                {tab}
+                {count > 0 && (
+                  <span className={`text-xs rounded-full px-1.5 ${isActive ? 'bg-white/20' : 'bg-slate-700'}`}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         {/* Legend */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 ml-1">
           <div className="flex items-center gap-1.5">
             <div className="w-3 h-3 rounded-sm" style={{ background: BLUE_HDR }} />
             <span className="text-xs text-slate-400">LinkedIn API</span>
@@ -740,6 +788,11 @@ export default function BODTab() {
             <div className="w-3 h-3 rounded-sm bg-slate-500" />
             <span className="text-xs text-slate-400">BOD Ref Sheet</span>
           </div>
+          {!loadingAccs && allAccounts.length > 0 && (
+            <span className="text-xs text-slate-500">
+              {activeAccCount.toLocaleString()} accs · {BUILTIN_EXCLUDED.length} excluded
+            </span>
+          )}
         </div>
 
         <div className="flex-1" />
@@ -869,44 +922,30 @@ export default function BODTab() {
         </div>
 
         {/* Ref sheet status — only shown in All Accounts mode */}
-        {mode === 'all' && (
-          <>
+        <>
             <input type="file" ref={refFileRef} accept=".xlsx,.xls" className="hidden" onChange={handleRefUpload} />
-            {refSource === 'loading' && (
-              <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-slate-400">
-                <RefreshCw className="w-3 h-3 animate-spin" /> Loading ref…
-              </div>
-            )}
-            {refSource === 'builtin' && (
-              <div className="flex items-center gap-1.5">
-                <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-900/40 border border-emerald-700/60 rounded-lg text-xs text-emerald-400 font-medium">
-                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                  <span>Built-in Ref ({refCount.toLocaleString()} entries · {BUILTIN_EXCLUDED.length} auto-excluded)</span>
-                </div>
-                <button onClick={() => refFileRef.current?.click()} title="Upload a custom reference sheet to override"
-                  className="flex items-center gap-1 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-white rounded-lg text-xs border border-slate-600 transition-colors">
-                  <Upload className="w-3 h-3" /> Override
-                </button>
-              </div>
+            {refSource === 'none' && (
+              <button onClick={() => refFileRef.current?.click()}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-700/60 hover:bg-amber-700 border border-amber-600/60 text-amber-200 rounded-lg text-xs font-semibold transition-colors">
+                <Upload className="w-3.5 h-3.5" /> Upload BOD Ref Sheet
+              </button>
             )}
             {refSource === 'uploaded' && (
               <div className="flex items-center gap-1.5">
-                <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-900/40 border border-blue-700/60 rounded-lg text-xs text-blue-300 font-medium">
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-900/40 border border-emerald-700/60 rounded-lg text-xs text-emerald-400 font-medium">
                   <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                  <span>Custom Ref ({refCount.toLocaleString()} entries)</span>
+                  <span>BOD Ref Sheet — {refCount.toLocaleString()} entries</span>
                 </div>
-                <button onClick={() => refFileRef.current?.click()} title="Upload a different reference sheet"
+                <button onClick={() => refFileRef.current?.click()} title="Replace the BOD ref sheet"
                   className="flex items-center gap-1 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-white rounded-lg text-xs border border-slate-600 transition-colors">
                   <Upload className="w-3 h-3" /> Replace
                 </button>
               </div>
             )}
-          </>
-        )}
+        </>
 
-        {/* Account menu — All Accounts mode only */}
-        {mode === 'all' && (
-          <div className="relative" ref={menuRef}>
+        {/* Account menu */}
+        <div className="relative" ref={menuRef}>
             <button onClick={() => setShowAccMenu(v => !v)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs font-medium border border-slate-600 transition-colors">
               {loadingAccs ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
@@ -980,7 +1019,7 @@ export default function BODTab() {
         </button>
 
         {/* Export */}
-        <button disabled={computedRows.length === 0} onClick={() => exportToExcel(computedRows, startDate, endDate)}
+        <button disabled={computedRows.length === 0} onClick={() => exportToExcel(computedRows, startDate, endDate, activeReportTab)}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold disabled:opacity-40 transition-colors">
           <FileSpreadsheet className="w-3.5 h-3.5" /> Export Excel
         </button>
