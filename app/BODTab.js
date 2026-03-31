@@ -326,14 +326,17 @@ function applyRef(rawRows, ref) {
       ref.byAccGrp?.[`${accStr}_0`]         ||
       ref.byAcc?.[accStr]                   || {};
     // Determine which of the 4 report tabs this row belongs to
+    // BOD  = billingType BOD + Managed
+    // BOI  = billingType BOI (any managed type)
+    // BUF  = billingType BUF (any managed type)
+    // Self-Managed = billingType BOD + Self-Managed
     const btype = d.billingType || '';
     const mtype = d.managedType || '';
-    let reportTab = 'Other';
-    if (btype === 'BOD' && mtype === 'Managed')      reportTab = 'BOD';
-    else if (btype === 'BOD' && mtype === 'Self-Managed') reportTab = 'Self-Managed';
-    else if (btype === 'BOU')                         reportTab = 'BOU';
-    else if (btype === 'Bill Up Front')               reportTab = 'Bill Up Front';
-    else if (btype === 'BOD')                         reportTab = 'BOD'; // BOD with no managed type → BOD
+    let reportTab = 'BOD'; // default unmapped rows to BOD
+    if      (btype === 'BOI')                                  reportTab = 'BOI';
+    else if (btype === 'BUF')                                  reportTab = 'BUF';
+    else if (btype === 'BOD' && mtype === 'Self-Managed')      reportTab = 'Self-Managed';
+    else if (btype === 'BOD')                                  reportTab = 'BOD';
 
     return {
       ...r,
@@ -502,7 +505,7 @@ export default function BODTab() {
   const [refSource, setRefSource] = useState('none'); // 'none' | 'uploaded'
 
   // ── 4 report sub-tabs ────────────────────────────────────────────────────────
-  const REPORT_TABS = ['BOD', 'Self-Managed', 'BOU', 'Bill Up Front'];
+  const REPORT_TABS = ['BOD', 'BOI', 'BUF', 'Self-Managed'];
   const [activeReportTab, setActiveReportTab] = useState('BOD');
 
   // ── Persist settings ─────────────────────────────────────────────────────────
@@ -715,7 +718,7 @@ export default function BODTab() {
   });
 
   // Count rows per tab for the tab badges
-  const tabCounts = { BOD: 0, 'Self-Managed': 0, BOU: 0, 'Bill Up Front': 0 };
+  const tabCounts = { BOD: 0, BOI: 0, BUF: 0, 'Self-Managed': 0 };
   rows.forEach(r => {
     if (BUILTIN_EXCLUDED_IDS.has(String(r.accountId))) return;
     if (excludedIds.includes(String(r.accountId)))      return;
@@ -759,10 +762,10 @@ export default function BODTab() {
             const count = tabCounts[tab] || 0;
             const isActive = activeReportTab === tab;
             const tabColors = {
-              'BOD':           isActive ? 'bg-blue-600 text-white'    : 'text-slate-400 hover:text-white',
-              'Self-Managed':  isActive ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white',
-              'BOU':           isActive ? 'bg-purple-600 text-white'  : 'text-slate-400 hover:text-white',
-              'Bill Up Front': isActive ? 'bg-amber-600 text-white'   : 'text-slate-400 hover:text-white',
+              'BOD':          isActive ? 'bg-blue-600 text-white'    : 'text-slate-400 hover:text-white',
+              'BOI':          isActive ? 'bg-purple-600 text-white'  : 'text-slate-400 hover:text-white',
+              'BUF':          isActive ? 'bg-amber-600 text-white'   : 'text-slate-400 hover:text-white',
+              'Self-Managed': isActive ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white',
             };
             return (
               <button key={tab} onClick={() => setActiveReportTab(tab)}
