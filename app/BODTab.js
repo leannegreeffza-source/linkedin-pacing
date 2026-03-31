@@ -499,14 +499,19 @@ export default function BODTab() {
     return () => document.removeEventListener('mousedown', h);
   }, []);
 
-  // ── Fetch spend from LinkedIn API (streaming NDJSON) ───────────────────────
+  // ── Fetch ALL spend for the logged-in user, then enrich via BOD ref sheet ─────
+  // Flow:
+  //   1. Fetch spend for ALL accounts the user has access to (excluding builtin + manual exclusions)
+  //   2. Enrich each row using the uploaded BOD reference sheet (fills IO, Agency, Advertiser, PMF etc.)
+  //   3. Accounts in BUILTIN_EXCLUDED or manual excludedIds are never fetched
   async function loadBOD() {
     setLoading(true); setError('');
     setProgress({ phase: 1, pct: 0, message: 'Starting…', spendingCount: 0, totalCount: 0, rowsSoFar: 0 });
     try {
-      const accountIdsToFetch = mode === 'list' && bodList
-        ? bodList.accountIds
-        : allAccounts.filter(a => !excludedIds.includes(String(a.id)) && !BUILTIN_EXCLUDED_IDS.has(String(a.id))).map(a => String(a.id));
+      // Always fetch ALL accounts the user has access to — minus exclusions
+      const accountIdsToFetch = allAccounts
+        .filter(a => !BUILTIN_EXCLUDED_IDS.has(String(a.id)) && !excludedIds.includes(String(a.id)))
+        .map(a => String(a.id));
 
       if (!accountIdsToFetch.length) { setRows([]); setLoading(false); return; }
 
@@ -544,8 +549,8 @@ export default function BODTab() {
               setProgress(p => ({
                 ...p, phase: 1,
                 message: msg.done
-                  ? `✓ Found ${msg.spendingCount} accounts with spend (of ${msg.totalCount} total)`
-                  : 'Phase 1: Scanning for accounts with spend…',
+                  ? `✓ Found ${msg.spendingCount} accounts with spend (of ${msg.totalCount} checked)`
+                  : 'Phase 1: Scanning all accounts for spend…',
                 spendingCount: msg.spendingCount ?? p.spendingCount,
                 totalCount:    msg.totalCount    ?? p.totalCount,
                 pct: msg.done ? 50 : 15,
@@ -554,7 +559,7 @@ export default function BODTab() {
             if (msg.phase === 2) {
               setProgress(p => ({
                 ...p, phase: 2,
-                message: `Phase 2: Fetching campaigns (${msg.processed}/${msg.total} accounts, ${msg.rowsSoFar} rows so far…)`,
+                message: `Phase 2: Fetching campaign detail (${msg.processed}/${msg.total} accounts, ${msg.rowsSoFar} rows…)`,
                 pct: 50 + Math.round((msg.progress || 0) / 2),
                 rowsSoFar: msg.rowsSoFar ?? p.rowsSoFar,
               }));
@@ -570,39 +575,26 @@ export default function BODTab() {
 
       if (!finalRows) throw new Error('Stream completed without data. Try a shorter date range.');
 
-      let merged;
-      if (mode === 'list' && bodList) {
-        const spendByAccGrp = {}, spendByAccCamp = {};
-        finalRows.forEach(r => {
-          const kAG = `${r.accountId}_${r.campaignGroupId}`;
-          spendByAccGrp[kAG] = (spendByAccGrp[kAG] || 0) + (r.localSpend || 0);
-          const kAC = `${r.accountId}_${(r.campaignName||'').toLowerCase()}`;
-          spendByAccCamp[kAC] = (spendByAccCamp[kAC] || 0) + (r.localSpend || 0);
-        });
-        merged = bodList.rows.map(r => {
-          const spend = spendByAccGrp[`${r.accountId}_${r.campaignGroupId}`]
-                     || spendByAccCamp[`${r.accountId}_${(r.campaignName||'').toLowerCase()}`] || 0;
-          return { ...r, localSpend: spend, mediaSpendUSD: spend }; // fx resolved per-category in computeRow
-        });
-      } else {
-        merged = applyRef(finalRows, ref);
-      }
+      // ── Step 2: Enrich spend rows using the BOD reference sheet ────────────
+      // The ref sheet fills: IO, Staff Code, Billing Agency, Booking Agency,
+      // Advertiser, Industry, CI#, Category, PMF%, Special Notes
+      // Match priority: exact account+campaignGroup → account only
+      const enriched = applyRef(finalRows, ref);
 
-      setRows(merged);
+      setRows(enriched);
       setLastRefresh(new Date());
-      setProgress(p => ({ ...p, pct: 100, message: `Complete — ${merged.length} rows` }));
+      setProgress(p => ({
+        ...p, pct: 100,
+        message: `Complete — ${enriched.length} rows from ${[...new Set(enriched.map(r => r.accountId))].length} accounts${refCount > 0 ? ` (ref sheet: ${refCount} entries)` : ' (no ref sheet loaded)'}`,
+      }));
     } catch (e) { setError(e.message); }
     setLoading(false);
   }
 
-  // Auto-load
+  // Auto-load when accounts are available or dates change
   useEffect(() => {
-    if (mode === 'all' && allAccounts.length > 0) loadBOD();
+    if (allAccounts.length > 0) loadBOD();
   }, [allAccounts, startDate, endDate]);
-
-  useEffect(() => {
-    if (mode === 'list' && bodList) loadBOD();
-  }, [bodList, startDate, endDate]);
 
   // ── Upload BOD list file ──────────────────────────────────────────
   async function handleBODUpload(e) {
@@ -660,9 +652,12 @@ export default function BODTab() {
   ];
 
   // ── Derived display data ──────────────────────────────────────────
-  const activeRows = mode === 'list'
-    ? rows                                            // BOD list: show all rows (already filtered by file)
-    : rows.filter(r => !excludedIds.includes(String(r.accountId)) && !BUILTIN_EXCLUDED_IDS.has(String(r.accountId)));  // All accs: respect exclusions
+  // All rows already have exclusions applied at fetch time — filter display rows too
+  // in case manual exclusions were changed after load
+  const activeRows = rows.filter(r =>
+    !BUILTIN_EXCLUDED_IDS.has(String(r.accountId)) &&
+    !excludedIds.includes(String(r.accountId))
+  );
 
   const filteredRows = activeRows.filter(r => {
     if (!search) return true;
@@ -683,9 +678,9 @@ export default function BODTab() {
     grossZAR:      t.grossZAR      + (r.grossZAR      || 0),
   }), { localSpend:0, mediaSpendUSD:0, pmfUSD:0, mediaSpendZAR:0, pmfZAR:0, grossZAR:0 });
 
-  const activeAccCount = mode === 'list'
-    ? (bodList?.accountIds?.length || 0)
-    : allAccounts.filter(a => !excludedIds.includes(String(a.id)) && !BUILTIN_EXCLUDED_IDS.has(String(a.id))).length;
+  const activeAccCount = allAccounts.filter(a =>
+    !excludedIds.includes(String(a.id)) && !BUILTIN_EXCLUDED_IDS.has(String(a.id))
+  ).length;
 
   // ── Render ────────────────────────────────────────────────────────
   return (
@@ -694,49 +689,26 @@ export default function BODTab() {
       {/* ══ TOP TOOLBAR ══ */}
       <div className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center gap-2 flex-wrap shrink-0">
 
-        {/* Mode toggle */}
-        <div className="flex items-center bg-slate-900 rounded-lg p-0.5 gap-0.5">
-          <button onClick={() => { setMode('all'); setRows([]); }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
-              mode === 'all' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
-            <Users className="w-3.5 h-3.5" /> All Accounts
-          </button>
-          <button onClick={() => bodFileRef.current?.click()}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
-              mode === 'list' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}>
-            {uploadingBOD
-              ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              : <List className="w-3.5 h-3.5" />
-            }
-            {mode === 'list' && bodFileName ? 'BOD List ✓' : 'Upload BOD List'}
-          </button>
+        {/* Title + account count */}
+        <div className="flex items-center gap-2 mr-2">
+          <Users className="w-4 h-4 text-blue-400 shrink-0" />
+          <span className="text-sm font-bold text-white">BOD Report</span>
+          {!loadingAccs && allAccounts.length > 0 && (
+            <span className="text-xs text-slate-400 bg-slate-700 px-2 py-0.5 rounded-full">
+              {activeAccCount.toLocaleString()} accounts · {BUILTIN_EXCLUDED.length} auto-excluded
+            </span>
+          )}
         </div>
 
-        {/* BOD list badge */}
-        {mode === 'list' && bodList && (
-          <div className="flex items-center gap-2 bg-emerald-900/40 border border-emerald-700/50 rounded-lg px-2.5 py-1">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-            <span className="text-xs text-emerald-300 truncate max-w-[180px]" title={bodFileName}>
-              {bodFileName}
-            </span>
-            <span className="text-xs text-emerald-500">· {bodList.rowCount} rows · {bodList.accountIds.length} accounts</span>
-            <button onClick={clearBODList} className="text-slate-400 hover:text-red-400 ml-1">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-
         {/* Legend */}
-        <div className="flex items-center gap-3 ml-1">
+        <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
             <div className="w-3 h-3 rounded-sm" style={{ background: BLUE_HDR }} />
             <span className="text-xs text-slate-400">LinkedIn API</span>
           </div>
           <div className="flex items-center gap-1.5">
             <div className="w-3 h-3 rounded-sm bg-slate-500" />
-            <span className="text-xs text-slate-400">
-              {mode === 'list' ? 'From uploaded BOD' : 'Reference Sheet'}
-            </span>
+            <span className="text-xs text-slate-400">BOD Ref Sheet</span>
           </div>
         </div>
 
@@ -1071,28 +1043,16 @@ export default function BODTab() {
         ) : computedRows.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 gap-4 text-slate-500">
             <FileSpreadsheet className="w-12 h-12 opacity-20" />
-            {mode === 'list' && !bodList ? (
-              <>
-                <p className="text-sm font-medium text-slate-300">Upload a BOD List to get started</p>
-                <p className="text-xs text-center max-w-sm">
-                  Click <strong className="text-emerald-400">Upload BOD List</strong> to select your BOD Excel file.
-                  The app will read every row's account IDs and black-field data, then pull fresh LinkedIn spend for the selected date range.
-                </p>
-                <button onClick={() => bodFileRef.current?.click()}
-                  className="flex items-center gap-2 px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-sm font-semibold transition-colors">
-                  <Upload className="w-4 h-4" /> Choose BOD Excel File
-                </button>
-              </>
-            ) : (
-              <>
+                  <>
                 <p className="text-sm">No spend data for this period</p>
-                <p className="text-xs text-center max-w-sm">
-                  {mode === 'all' && refCount === 0
-                    ? 'Upload the Reference Sheet to populate Agency, Advertiser, IO and other fields — then click Refresh.'
-                    : 'Adjust the date range or click Refresh.'}
+                <p className="text-xs text-center max-w-sm text-slate-500">
+                  {loadingAccs
+                    ? 'Loading accounts…'
+                    : refCount === 0
+                      ? 'Tip: Upload the BOD Reference Sheet to populate Agency, Advertiser, IO and other fields.'
+                      : 'Adjust the date range or click Refresh.'}
                 </p>
               </>
-            )}
           </div>
         ) : (
           <table className="border-collapse text-xs" style={{ minWidth: 'max-content', width: '100%' }}>
@@ -1120,7 +1080,7 @@ export default function BODTab() {
                   {COLS.map(col => {
                     const val = row[col.key];
                     // Highlight rows with no spend fetched in BOD list mode
-                    const noSpend  = mode === 'list' && (col.key === 'localSpend' || col.key === 'mediaSpendUSD') && !val;
+                    const noSpend  = (col.key === 'localSpend' || col.key === 'mediaSpendUSD') && !val;
                     const catKey   = (row.category || '').trim();
                     const hasCatOverride = catKey && categoryRates[catKey] != null && (categoryRates[catKey]?.pmf != null || categoryRates[catKey]?.fx != null);
                     const isCatRateCol   = hasCatOverride && (col.key === 'pmfPercentage' || col.key === 'pmfPct' || col.key === 'pmfUSD' || col.key === 'pmfZAR');
