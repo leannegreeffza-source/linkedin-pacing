@@ -238,6 +238,13 @@ async function parseBODList(file) {
 }
 
 // ─── Parse reference sheet (for "All Accounts" mode) ─────────────────────────
+// Supports: Bill_On_Delivery_Reference_Sheet.xlsx
+// Target sheet: 'NEW_2023_BOD Reference Shee (2)' (or any sheet with 'new' or 'ref' in name)
+// Column mapping (0-indexed):
+//   0=Account ID, 1=Campaign Group ID, 2=IO Number, 4=Sales Person,
+//   5=Campaign Manager, 6=Billing Agency, 7=Booking Agency, 8=Advertiser,
+//   9=Industry, 12=PO Number, 13=Category, 15=Platform Man Fee (PMF%),
+//   17=Special Notes
 async function parseRefExcel(file) {
   const XLSX = await loadXLSX();
   return new Promise((resolve, reject) => {
@@ -245,28 +252,48 @@ async function parseRefExcel(file) {
     reader.onload = e => {
       try {
         const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
-        const sheetName = wb.SheetNames.find(n => n.toLowerCase().includes('ref')) || wb.SheetNames[0];
+        // Prefer: 'NEW_2023...' sheet, then any sheet with 'new' or '2023', then 'ref', then first
+        const sheetName =
+          wb.SheetNames.find(n => n.toLowerCase().includes('new_2023')) ||
+          wb.SheetNames.find(n => n.toLowerCase().includes('new') && n.toLowerCase().includes('bod')) ||
+          wb.SheetNames.find(n => n.toLowerCase().includes('ref')) ||
+          wb.SheetNames[0];
         const ws = wb.Sheets[sheetName];
         const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
         const byAccGrp = {}, byAcc = {};
+        let parsed = 0;
         for (let i = 1; i < rows.length; i++) {
           const r = rows[i];
-          const acc = r[0] ? String(r[0]).trim() : '';
+          const acc = r[0] ? String(Math.round(Number(r[0]))).trim() : '';
           if (!acc || !/^\d+$/.test(acc)) continue;
           let grp = '0';
-          try { if (r[1] && !isNaN(Number(r[1]))) grp = String(Math.round(Number(r[1]))); } catch {}
+          try { if (r[1] != null && !isNaN(Number(r[1]))) grp = String(Math.round(Number(r[1]))); } catch {}
+          // PMF: col 15 = Platform Man Fee — value is already a decimal (0.08 = 8%)
+          // but sometimes stored as whole number (8 = 8%), normalise both
+          let pmf = 0;
+          if (r[15] != null && r[15] !== '') {
+            pmf = parseFloat(r[15]) || 0;
+            if (pmf > 1) pmf = pmf / 100; // convert 8 → 0.08
+          }
+          const s = v => (v != null && v !== '') ? String(v).trim() : '';
           const entry = {
-            io: r[2]?String(r[2]).trim():'', staffCode: r[4]?String(r[4]).trim():'',
-            billingAgency: r[6]?String(r[6]).trim():'', bookingAgency: r[7]?String(r[7]).trim():'',
-            advertiser: r[8]?String(r[8]).trim():'', industry: r[9]?String(r[9]).trim():'',
-            poNumber: r[12]?String(r[12]).trim():'', category: r[13]?String(r[13]).trim():'',
-            pmfPercentage: r[15] ? parseFloat(r[15]) || 0 : 0,
-            specialNotes: r[17]?String(r[17]).trim():'',
+            io:            s(r[2]),
+            staffCode:     s(r[4]),
+            billingAgency: s(r[6]),
+            bookingAgency: s(r[7]),
+            advertiser:    s(r[8]),
+            industry:      s(r[9]),
+            poNumber:      s(r[12]),
+            category:      s(r[13]),
+            pmfPercentage: pmf,
+            specialNotes:  s(r[17]),
           };
-          if (!byAccGrp[`${acc}_${grp}`]) byAccGrp[`${acc}_${grp}`] = entry;
-          if (!byAcc[acc]) byAcc[acc] = entry;
+          const key = `${acc}_${grp}`;
+          if (!byAccGrp[key]) byAccGrp[key] = entry;
+          if (!byAcc[acc])    byAcc[acc]    = entry;
+          parsed++;
         }
-        resolve({ byAccGrp, byAcc });
+        resolve({ byAccGrp, byAcc, sheetName, rowCount: parsed });
       } catch (err) { reject(err); }
     };
     reader.readAsArrayBuffer(file);
@@ -434,12 +461,33 @@ export default function BODTab() {
   const bodFileRef  = useRef();
   const menuRef     = useRef();
 
-  // ── Persist settings ──────────────────────────────────────────────
+  // ── Load built-in reference data + auto-exclusions from API ─────────────────
+  const [refSource, setRefSource] = useState('loading'); // 'loading' | 'builtin' | 'uploaded'
+  const [builtinExcludedIds, setBuiltinExcludedIds] = useState([]); // from the reference sheet
+
   useEffect(() => {
-    const savedRef = lsGet('bod_ref_data_v1', null);
-    if (savedRef) { setRef(savedRef); setRefCount(Object.keys(savedRef.byAccGrp || {}).length); }
+    // Load manual exclusions from localStorage
     setExcludedIds(lsGet('bod_excluded_ids', []));
 
+    // Fetch built-in reference data and auto-exclusions
+    fetch('/api/bod-ref')
+      .then(r => r.json())
+      .then(data => {
+        if (data.ref) {
+          setRef(data.ref);
+          setRefCount(Object.keys(data.ref.byAccGrp || {}).length);
+          setRefSource('builtin');
+        }
+        if (data.excludedIds) {
+          setBuiltinExcludedIds(data.excludedIds);
+        }
+      })
+      .catch(() => {
+        // Fall back to localStorage if API fails
+        const savedRef = lsGet('bod_ref_data_v1', null);
+        if (savedRef) { setRef(savedRef); setRefCount(Object.keys(savedRef.byAccGrp || {}).length); }
+        setRefSource('uploaded');
+      });
   }, []);
 
   // ── Fetch all accounts the user has access to (up to 10,000) ────────────
@@ -472,7 +520,7 @@ export default function BODTab() {
     try {
       const accountIdsToFetch = mode === 'list' && bodList
         ? bodList.accountIds
-        : allAccounts.filter(a => !excludedIds.includes(a.id)).map(a => String(a.id));
+        : allAccounts.filter(a => !excludedIds.includes(a.id) && !builtinExcludedIds.includes(String(a.id))).map(a => String(a.id));
 
       if (!accountIdsToFetch.length) { setRows([]); setLoading(false); return; }
 
@@ -595,9 +643,10 @@ export default function BODTab() {
     try {
       const parsed = await parseRefExcel(file);
       setRef(parsed); setRefCount(Object.keys(parsed.byAccGrp || {}).length);
+      setRefSource('uploaded');
       lsSet('bod_ref_data_v1', parsed);
       setRows(prev => applyRef(prev, parsed));
-      alert(`✅ Reference data loaded: ${Object.keys(parsed.byAccGrp).length} entries`);
+      alert(`✅ Reference data loaded from "${parsed.sheetName}"\n${parsed.rowCount} rows → ${Object.keys(parsed.byAccGrp).length} unique account+group entries`);
     } catch (err) { alert('❌ ' + err.message); }
     e.target.value = '';
   }
@@ -650,7 +699,7 @@ export default function BODTab() {
 
   const activeAccCount = mode === 'list'
     ? (bodList?.accountIds?.length || 0)
-    : allAccounts.filter(a => !excludedIds.includes(a.id)).length;
+    : allAccounts.filter(a => !excludedIds.includes(a.id) && !builtinExcludedIds.includes(String(a.id))).length;
 
   // ── Render ────────────────────────────────────────────────────────
   return (
@@ -831,15 +880,39 @@ export default function BODTab() {
           )}
         </div>
 
-        {/* Ref sheet upload — only shown in All Accounts mode */}
+        {/* Ref sheet status — only shown in All Accounts mode */}
         {mode === 'all' && (
           <>
             <input type="file" ref={refFileRef} accept=".xlsx,.xls" className="hidden" onChange={handleRefUpload} />
-            <button onClick={() => refFileRef.current?.click()}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs font-medium border border-slate-600 transition-colors">
-              <Upload className="w-3.5 h-3.5" />
-              {refCount > 0 ? `Ref (${refCount.toLocaleString()})` : 'Upload Ref Sheet'}
-            </button>
+            {refSource === 'loading' && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-slate-400">
+                <RefreshCw className="w-3 h-3 animate-spin" /> Loading ref…
+              </div>
+            )}
+            {refSource === 'builtin' && (
+              <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-900/40 border border-emerald-700/60 rounded-lg text-xs text-emerald-400 font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>Built-in Ref ({refCount.toLocaleString()} entries · {builtinExcludedIds.length} auto-excluded)</span>
+                </div>
+                <button onClick={() => refFileRef.current?.click()} title="Upload a custom reference sheet to override"
+                  className="flex items-center gap-1 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-white rounded-lg text-xs border border-slate-600 transition-colors">
+                  <Upload className="w-3 h-3" /> Override
+                </button>
+              </div>
+            )}
+            {refSource === 'uploaded' && (
+              <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-900/40 border border-blue-700/60 rounded-lg text-xs text-blue-300 font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>Custom Ref ({refCount.toLocaleString()} entries)</span>
+                </div>
+                <button onClick={() => refFileRef.current?.click()} title="Upload a different reference sheet"
+                  className="flex items-center gap-1 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-white rounded-lg text-xs border border-slate-600 transition-colors">
+                  <Upload className="w-3 h-3" /> Replace
+                </button>
+              </div>
+            )}
           </>
         )}
 
@@ -850,30 +923,48 @@ export default function BODTab() {
               className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs font-medium border border-slate-600 transition-colors">
               {loadingAccs ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
               <span>{loadingAccs ? 'Loading accounts…' : `${activeAccCount.toLocaleString()} / ${allAccounts.length.toLocaleString()} Accounts`}</span>
-              {excludedIds.length > 0 && (
-                <span className="bg-red-600 text-white text-xs font-bold rounded-full px-1.5">{excludedIds.length} hidden</span>
+              {(excludedIds.length + allAccounts.filter(a => builtinExcludedIds.includes(String(a.id))).length) > 0 && (
+                <span className="bg-red-600 text-white text-xs font-bold rounded-full px-1.5">
+                  {excludedIds.length + allAccounts.filter(a => builtinExcludedIds.includes(String(a.id))).length} hidden
+                </span>
               )}
               <ChevronDown className="w-3 h-3 text-slate-400" />
             </button>
 
             {showAccMenu && (
               <div className="absolute right-0 top-9 z-30 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-80 p-3">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 px-1">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1 px-1">
                   Include / Exclude Accounts ({allAccounts.length.toLocaleString()} total)
                 </p>
+                {builtinExcludedIds.length > 0 && (
+                  <p className="text-xs text-amber-400/80 px-1 mb-2">
+                    {allAccounts.filter(a => builtinExcludedIds.includes(String(a.id))).length} auto-excluded by built-in list
+                  </p>
+                )}
                 {allAccounts.length === 0
                   ? <p className="text-xs text-slate-500 py-3 text-center">No accounts found</p>
                   : (
                     <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
                       {allAccounts.map(a => {
-                        const excl = excludedIds.includes(a.id);
+                        const excl     = excludedIds.includes(a.id);
+                        const autoExcl = builtinExcludedIds.includes(String(a.id));
                         return (
                           <div key={a.id}
-                            className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors ${excl ? 'bg-red-900/30 border border-red-800/50' : 'bg-slate-700 hover:bg-slate-600'}`}
-                            onClick={() => toggleExclude(a.id)}>
-                            {excl ? <EyeOff className="w-3.5 h-3.5 text-red-400 shrink-0" /> : <Eye className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
-                            <span className={`text-xs flex-1 truncate ${excl ? 'text-red-300 line-through' : 'text-white'}`}>{a.name}</span>
+                            className={`flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors ${
+                              autoExcl ? 'bg-amber-900/20 border border-amber-800/40 cursor-default' :
+                              excl     ? 'bg-red-900/30 border border-red-800/50 cursor-pointer' :
+                                         'bg-slate-700 hover:bg-slate-600 cursor-pointer'
+                            }`}
+                            onClick={() => !autoExcl && toggleExclude(a.id)}>
+                            {autoExcl
+                              ? <EyeOff className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                              : excl
+                                ? <EyeOff className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                                : <Eye   className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                            }
+                            <span className={`text-xs flex-1 truncate ${autoExcl ? 'text-amber-400/70 line-through' : excl ? 'text-red-300 line-through' : 'text-white'}`}>{a.name}</span>
                             <span className="text-xs text-slate-500 font-mono shrink-0">{a.id}</span>
+                            {autoExcl && <span className="text-xs text-amber-600 shrink-0">auto</span>}
                           </div>
                         );
                       })}
