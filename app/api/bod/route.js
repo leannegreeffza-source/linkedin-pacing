@@ -69,6 +69,7 @@ async function getCampaignSpend(campaignIds, dateStr, accessToken) {
 
 // For one account: fetch all campaigns, then get spend for each in batches of 20.
 async function processAccount(accountId, dateStr, accessToken) {
+  try {
   const accUrn   = `urn:li:sponsoredAccount:${accountId}`;
   const campaigns = [];
   let campStart  = 0;
@@ -146,6 +147,10 @@ async function processAccount(accountId, dateStr, accessToken) {
       };
     })
     .filter(Boolean);
+  } catch (err) {
+    console.error(`[BOD] processAccount ${accountId} failed:`, err.message);
+    return []; // skip failed accounts, don't crash the whole stream
+  }
 }
 
 export async function POST(request) {

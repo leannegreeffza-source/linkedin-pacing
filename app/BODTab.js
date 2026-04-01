@@ -571,43 +571,49 @@ export default function BODTab() {
         throw new Error(err.error || `HTTP ${res.status}`);
       }
 
-      // Read NDJSON stream
+      // Read NDJSON stream — process every line including any remaining in buffer after stream ends
       const reader  = res.body.getReader();
       const decoder = new TextDecoder();
-      let buffer = '';
+      let buffer    = '';
       let finalRows = null;
+
+      const processLine = (line) => {
+        if (!line.trim()) return;
+        try {
+          const msg = JSON.parse(line);
+          if (msg.error) throw new Error(msg.error);
+          if (msg.phase === 1) {
+            setProgress(p => ({
+              ...p, phase: 1,
+              message:   msg.message   || 'Fetching spend…',
+              pct:       msg.pct       ?? p.pct,
+              rowsSoFar: msg.rowsSoFar ?? p.rowsSoFar,
+            }));
+          }
+          if (msg.done && Array.isArray(msg.rows)) {
+            finalRows = msg.rows;
+          }
+        } catch (e) {
+          // Only re-throw real errors — not malformed partial lines
+          if (e.message && !e.message.includes('JSON') && !e.message.includes('Unexpected')) throw e;
+        }
+      };
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+        if (value) buffer += decoder.decode(value, { stream: !done });
         const lines = buffer.split('\n');
-        buffer = lines.pop();
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const msg = JSON.parse(line);
-            if (msg.error) throw new Error(msg.error);
-
-            if (msg.phase === 1) {
-              setProgress(p => ({
-                ...p, phase: 1,
-                message: msg.message || 'Fetching spend…',
-                pct:     msg.pct    ?? p.pct,
-                rowsSoFar: msg.rowsSoFar ?? p.rowsSoFar,
-              }));
-            }
-            if (msg.done && Array.isArray(msg.rows)) {
-              finalRows = msg.rows;
-            }
-          } catch (e) {
-            if (e.message !== 'Unexpected end of JSON input') throw e;
-          }
+        // On done, process ALL lines including the last one; otherwise keep the last partial line
+        if (done) {
+          lines.forEach(processLine);
+          buffer = '';
+          break;
         }
+        buffer = lines.pop(); // keep incomplete last chunk
+        lines.forEach(processLine);
       }
 
-      if (!finalRows) throw new Error('Stream completed without data. Try a shorter date range.');
+      if (!finalRows) throw new Error('No data returned from LinkedIn API. Check your date range or try refreshing.');
 
       // ── Step 2: Enrich spend rows using the BOD reference sheet ────────────
       // The ref sheet fills: IO, Staff Code, Billing Agency, Booking Agency,
