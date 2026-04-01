@@ -582,19 +582,20 @@ export default function BODTab() {
         try {
           const msg = JSON.parse(line);
           if (msg.error) throw new Error(msg.error);
-          if (msg.phase === 1) {
+          if (msg.phase === 1 || msg.phase === 2) {
             setProgress(p => ({
-              ...p, phase: 1,
-              message:   msg.message   || 'Fetching spend…',
+              ...p,
+              phase:     msg.phase,
+              message:   msg.message   || p.message,
               pct:       msg.pct       ?? p.pct,
               rowsSoFar: msg.rowsSoFar ?? p.rowsSoFar,
+              spendingCount: msg.spendingCount ?? p.spendingCount,
             }));
           }
           if (msg.done && Array.isArray(msg.rows)) {
             finalRows = msg.rows;
           }
         } catch (e) {
-          // Only re-throw real errors — not malformed partial lines
           if (e.message && !e.message.includes('JSON') && !e.message.includes('Unexpected')) throw e;
         }
       };
