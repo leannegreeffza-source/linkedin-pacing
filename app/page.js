@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import BODTab from './BODTab';
+import BOD2Tab from './BOD2Tab';
 import KenyaTab from './KenyaTab';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import {
@@ -446,7 +447,7 @@ export default function PacingDashboard() {
 
   // Budget
   const [budget, setBudget] = useState({ totalUSD: '', totalZAR: '', note: '' });
-  const [activeTab, setActiveTab] = useState('pacing'); // 'pacing' | 'bod' | 'kenya'
+  const [activeTab, setActiveTab] = useState('pacing'); // 'pacing' | 'bod' | 'bod2' | 'kenya'
   const [showBudgetModal, setShowBudgetModal] = useState(false);
 
   // Pacing
@@ -798,6 +799,15 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                     : 'text-slate-400 hover:text-white'
                 }`}>
                 BOD Report
+              </button>
+              <button
+                onClick={() => setActiveTab('bod2')}
+                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                  activeTab === 'bod2'
+                    ? 'bg-cyan-600 text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}>
+                BOD 2
               </button>
               <button
                 onClick={() => setActiveTab('kenya')}
@@ -1317,6 +1327,13 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
       {activeTab === 'bod' && (
         <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
           <BODTab />
+        </div>
+      )}
+
+      {/* ── BOD 2 Tab — Deduplication account spend ── */}
+      {activeTab === 'bod2' && (
+        <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
+          <BOD2Tab />
         </div>
       )}
 
