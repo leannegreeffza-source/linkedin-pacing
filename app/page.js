@@ -523,7 +523,8 @@ export default function PacingDashboard() {
         excludedRef.current = excl;
         setExcludedAccounts(excl);
       }
-    } catch (err) { console.error(err); }
+      // 405 = route not found yet, just skip
+    } catch (err) { /* exclusions unavailable, continue without */ }
   }
 
   async function saveExclusions(newExclusions) {
