@@ -661,7 +661,7 @@ export default function BOD2Tab() {
                         {isEmpty ? '—' : display}
                       </td>
                     );
-                  }))}
+                  })}
                 </tr>
               ))}
             </tbody>
@@ -680,7 +680,7 @@ export default function BOD2Tab() {
                       {v != null ? fmtNum(v, 2) : ci === 0 ? 'TOTAL' : ''}
                     </td>
                   );
-                }))}
+                })}
               </tr>
             </tfoot>
           </table>
