@@ -236,6 +236,10 @@ export default function BOD2Tab() {
   // Remove excluded accounts from dedup list
   const activeIds = dedupIds.filter(id => !EXCLUDED_IDS.has(id));
 
+  // ── All platform accounts (fetched from LinkedIn via /api/accounts) ─────────
+  const [allAccounts,  setAllAccounts]  = useState([]);
+  const [loadingAccs,  setLoadingAccs]  = useState(false);
+
   // ── Ref sheet ───────────────────────────────────────────────────────────────
   const [ref,       setRef]       = useState({ byAccGrp: {}, byAcc: {} });
   const [refCount,  setRefCount]  = useState(0);
@@ -278,6 +282,16 @@ export default function BOD2Tab() {
     }
   }, []);
 
+  // ── Fetch ALL accounts the user has access to on the platform ────────────────
+  useEffect(() => {
+    if (!session) return;
+    setLoadingAccs(true);
+    fetch('/api/accounts')
+      .then(r => r.json())
+      .then(d => { setAllAccounts(Array.isArray(d) ? d : []); setLoadingAccs(false); })
+      .catch(() => setLoadingAccs(false));
+  }, [session]);
+
   useEffect(() => {
     const h = e => { if (catMenuRef.current && !catMenuRef.current.contains(e.target)) setShowCatMenu(false); };
     document.addEventListener('mousedown', h);
@@ -285,20 +299,42 @@ export default function BOD2Tab() {
   }, []);
 
   // ── Run Report ───────────────────────────────────────────────────────────────
-  // 1. Use the dedup list for the selected sheet as the account list
-  // 2. Remove any accounts in EXCLUDED_IDS
-  // 3. Phase 1: scan for spend using costInUsd (pivot=ACCOUNT)
-  // 4. Phase 2: campaign-group detail for accounts with spend
-  // 5. Enrich with ref sheet grey columns
+  // Flow:
+  //   1. Fetch ALL accounts from the platform (/api/accounts already loaded)
+  //   2. Intersect with the selected dedup sheet list
+  //   3. Remove excluded accounts (EXCLUDED_IDS)
+  //   4. Send to /api/bod → Phase 1 scans for spend, Phase 2 gets campaign groups
+  //   5. Enrich grey columns from BOD ref sheet
   async function runReport() {
-    if (!activeIds.length) { setError('No active accounts in selected dedup list.'); return; }
+    if (!allAccounts.length) {
+      setError('Platform account list not loaded yet. Please wait a moment and try again.');
+      return;
+    }
+
+    // Step 1: build the set of all platform account IDs
+    const platformIds = new Set(allAccounts.map(a => String(a.id)));
+
+    // Step 2: intersect dedup list with platform accounts
+    const dedupSet = new Set(dedupIds);
+    const intersected = allAccounts
+      .map(a => String(a.id))
+      .filter(id => dedupSet.has(id) && !EXCLUDED_IDS.has(id));
+
+    if (!intersected.length) {
+      setError('No matching accounts found between the platform and the dedup list.');
+      return;
+    }
+
     setLoading(true); setError(''); setHasRun(true);
-    setProgress({ pct: 2, message: `Using ${activeIds.length} accounts from dedup list "${selectedSheet}"…` });
+    setProgress({
+      pct: 2,
+      message: `${intersected.length} accounts (dedup "${selectedSheet}" ∩ platform ${platformIds.size} accounts, ${dedupIds.filter(id => EXCLUDED_IDS.has(id)).length} excluded)…`,
+    });
     try {
       const res = await fetch('/api/bod', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ accountIds: activeIds, startDate, endDate }),
+        body:    JSON.stringify({ accountIds: intersected, startDate, endDate }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
@@ -426,7 +462,11 @@ export default function BOD2Tab() {
             ))}
           </select>
           <span className="text-xs text-slate-500">
-            {activeIds.length} active · {excludedFromDedup.length} excluded
+            {dedupIds.length} in list
+            {allAccounts.length > 0
+              ? <> · <span className="text-emerald-400 font-bold">{allAccounts.filter(a => new Set(dedupIds).has(String(a.id)) && !EXCLUDED_IDS.has(String(a.id))).length}</span> matched on platform</>
+              : loadingAccs ? ' · loading…' : ''}
+            {dedupIds.filter(id => EXCLUDED_IDS.has(id)).length > 0 && <span className="text-red-400"> · {dedupIds.filter(id => EXCLUDED_IDS.has(id)).length} excluded</span>}
           </span>
         </div>
 
@@ -603,7 +643,11 @@ export default function BOD2Tab() {
             <FileSpreadsheet className="w-12 h-12 opacity-20" />
             <div className="text-center space-y-1">
               <p className="text-sm font-medium text-slate-300">BOD 2 — Deduplication Account Report</p>
-              <p className="text-xs">Using <span className="text-blue-400 font-bold">{selectedSheet}</span> dedup list · <span className="text-emerald-400 font-bold">{activeIds.length}</span> accounts · <span className="text-red-400 font-bold">{excludedFromDedup.length}</span> excluded</p>
+              <p className="text-xs">
+                Dedup list <span className="text-blue-400 font-bold">{selectedSheet}</span> · <span className="text-emerald-400 font-bold">{dedupIds.length}</span> accounts
+                {allAccounts.length > 0 && <span className="text-slate-400"> · matched <span className="text-white font-bold">{allAccounts.filter(a => new Set(dedupIds).has(String(a.id)) && !EXCLUDED_IDS.has(String(a.id))).length}</span> on platform</span>}
+                {loadingAccs && <span className="text-amber-400"> · loading platform accounts…</span>}
+              </p>
               {refSource === 'none' && <p className="text-xs text-amber-400">⚠ Upload the BOD Ref Sheet to populate grey columns</p>}
             </div>
             <button onClick={runReport} disabled={loading}
