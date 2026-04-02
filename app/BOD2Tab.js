@@ -140,8 +140,8 @@ async function parseRefSheet(file) {
           const managedType = managedRaw.toLowerCase().includes('self') ? 'Self-Managed'
                             : managedRaw ? 'Managed' : '';
           let reportTab = 'BOD';
-          if      (billingType === 'BOI')                                  reportTab = 'BOI';
-          else if (billingType === 'BUF')                                  reportTab = 'BUF';
+          if      (billingType === 'BOI')                                  reportTab = 'COD';  // remapped
+          else if (billingType === 'BUF')                                  reportTab = 'Make Good';  // remapped
           else if (billingType === 'BOD' && managedType === 'Self-Managed') reportTab = 'Self-Managed';
           const entry = {
             io: s(r[2]), staffCode: s(r[4]), billingAgency: s(r[6]),
@@ -260,7 +260,7 @@ export default function BOD2Tab() {
   const [ranDates,    setRanDates]    = useState({ start: '', end: '' });
 
   // ── Report tabs ─────────────────────────────────────────────────────────────
-  const REPORT_TABS = ['All Spend', 'BOD', 'BOI', 'BUF', 'Self-Managed'];
+  const REPORT_TABS = ['All Spend', 'BOD', 'Self-Managed', 'COD', 'Make Good'];
   const [activeTab, setActiveTab] = useState('All Spend');
 
   // ── Search + category overrides ─────────────────────────────────────────────
@@ -403,7 +403,7 @@ export default function BOD2Tab() {
   }
 
   // ── Derived data ────────────────────────────────────────────────────────────
-  const tabCounts = { 'All Spend': 0, BOD: 0, BOI: 0, BUF: 0, 'Self-Managed': 0 };
+  const tabCounts = { 'All Spend': 0, BOD: 0, 'Self-Managed': 0, COD: 0, 'Make Good': 0 };
   rows.forEach(r => {
     tabCounts['All Spend']++;
     const t = r.reportTab || 'BOD';
@@ -438,9 +438,9 @@ export default function BOD2Tab() {
   const TAB_ACTIVE = {
     'All Spend':    'bg-slate-600 text-white',
     'BOD':          'bg-blue-600 text-white',
-    'BOI':          'bg-purple-600 text-white',
-    'BUF':          'bg-amber-600 text-white',
     'Self-Managed': 'bg-emerald-600 text-white',
+    'COD':          'bg-purple-600 text-white',
+    'Make Good':    'bg-amber-600 text-white',
   };
 
   const excludedFromDedup = dedupIds.filter(id => EXCLUDED_IDS.has(id));

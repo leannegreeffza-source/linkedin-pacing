@@ -152,8 +152,8 @@ async function parseRefExcel(file) {
 
           // reportTab logic
           let reportTab = 'BOD';
-          if      (billingType === 'BOI')                               reportTab = 'BOI';
-          else if (billingType === 'BUF')                               reportTab = 'BUF';
+          if      (billingType === 'BOI')                               reportTab = 'COD';  // remapped
+          else if (billingType === 'BUF')                               reportTab = 'Make Good';  // remapped
           else if (billingType === 'BOD' && managedType === 'Self-Managed') reportTab = 'Self-Managed';
           else if (billingType === 'BOD')                               reportTab = 'BOD';
 
@@ -330,7 +330,7 @@ export default function BODTab() {
   const [categoryRates,   setCategoryRates]   = useState(() => lsGet('bod_category_rates', {}));
   const [showCatMenu,     setShowCatMenu]     = useState(false);
 
-  const REPORT_TABS = ['All Spend', 'BOD', 'BOI', 'BUF', 'Self-Managed'];
+  const REPORT_TABS = ['All Spend', 'BOD', 'Self-Managed', 'COD', 'Make Good'];
 
   const refFileRef = useRef();
   const menuRef    = useRef();
@@ -481,7 +481,7 @@ export default function BODTab() {
   }
 
   // ── Derived rows ──────────────────────────────────────────────────────────────
-  const tabCounts = { 'All Spend': 0, BOD: 0, BOI: 0, BUF: 0, 'Self-Managed': 0 };
+  const tabCounts = { 'All Spend': 0, BOD: 0, 'Self-Managed': 0, COD: 0, 'Make Good': 0 };
   rows.forEach(r => {
     if (BUILTIN_EXCLUDED_IDS.has(String(r.accountId))) return;
     if (excludedIds.includes(String(r.accountId)))      return;
@@ -525,9 +525,9 @@ export default function BODTab() {
   const TAB_ACTIVE = {
     'All Spend':    'bg-slate-600 text-white',
     'BOD':          'bg-blue-600 text-white',
-    'BOI':          'bg-purple-600 text-white',
-    'BUF':          'bg-amber-600 text-white',
     'Self-Managed': 'bg-emerald-600 text-white',
+    'COD':          'bg-purple-600 text-white',
+    'Make Good':    'bg-amber-600 text-white',
   };
 
   // ════════════════════════════════════════════════════════════════════════════════
