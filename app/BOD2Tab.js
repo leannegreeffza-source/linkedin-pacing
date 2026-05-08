@@ -104,6 +104,36 @@ async function loadXLSX() {
   });
 }
 
+// ─── Parse Dedup Excel file ──────────────────────────────────────────────────
+// Reads every sheet, extracts account IDs from column A (row 2+)
+async function parseDedupExcel(file) {
+  const XLSX = await loadXLSX();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb    = XLSX.read(e.target.result, { type: 'array' });
+        const sheets = {};
+        wb.SheetNames.forEach(name => {
+          const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true });
+          const ids  = [];
+          for (let i = 1; i < rows.length; i++) {
+            const v = rows[i][0];
+            if (v != null && v !== '') {
+              const id = String(Math.round(Number(v)));
+              if (/^\d+$/.test(id)) ids.push(id);
+            }
+          }
+          if (ids.length > 0) sheets[name] = ids;
+        });
+        if (Object.keys(sheets).length === 0) throw new Error('No account IDs found in file');
+        resolve({ sheets, fileName: file.name });
+      } catch (err) { reject(err); }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 // ─── Parse BOD Reference Sheet ───────────────────────────────────────────────
 // Col mapping (0-indexed):
 //   0=Account ID  1=Campaign Group ID  2=IO  3=Billing Type
@@ -229,12 +259,18 @@ async function exportToExcel(rows, startDate, endDate, tabName) {
 export default function BOD2Tab() {
   const { data: session } = useSession();
 
-  // ── Dedup sheet selector ────────────────────────────────────────────────────
-  const SHEET_NAMES  = Object.keys(DEDUP_SHEETS);
-  const [selectedSheet, setSelectedSheet] = useState(SHEET_NAMES[0]);
-  const dedupIds = DEDUP_SHEETS[selectedSheet] || [];
-  // Remove excluded accounts from dedup list
-  const activeIds = dedupIds.filter(id => !EXCLUDED_IDS.has(id));
+  // ── Dedup list — uploaded by user or falls back to embedded list ────────────
+  const EMBEDDED_SHEET_NAMES = Object.keys(DEDUP_SHEETS);
+  const [dedupFile,      setDedupFile]      = useState(null);   // { sheets, fileName }
+  const [selectedSheet,  setSelectedSheet]  = useState(EMBEDDED_SHEET_NAMES[0]);
+  const dedupFileRef = useRef();
+
+  // Active dedup sheets: uploaded file takes priority over embedded
+  const activeDedupSheets = dedupFile ? dedupFile.sheets : DEDUP_SHEETS;
+  const sheetNames        = Object.keys(activeDedupSheets);
+  // Reset selectedSheet if it doesn't exist in new file
+  const safeSheet  = sheetNames.includes(selectedSheet) ? selectedSheet : sheetNames[0] || '';
+  const dedupIds   = activeDedupSheets[safeSheet] || [];
 
   // ── All platform accounts (fetched from LinkedIn via /api/accounts) ─────────
   const [allAccounts,  setAllAccounts]  = useState([]);
@@ -315,7 +351,7 @@ export default function BOD2Tab() {
     const platformIds = new Set(allAccounts.map(a => String(a.id)));
 
     // Step 2: intersect dedup list with platform accounts
-    const dedupSet = new Set(dedupIds);
+    const dedupSet = new Set(dedupIds); // from uploaded file or embedded list
     const intersected = allAccounts
       .map(a => String(a.id))
       .filter(id => dedupSet.has(id) && !EXCLUDED_IDS.has(id));
@@ -328,7 +364,7 @@ export default function BOD2Tab() {
     setLoading(true); setError(''); setHasRun(true);
     setProgress({
       pct: 2,
-      message: `${intersected.length} accounts (dedup "${selectedSheet}" ∩ platform ${platformIds.size} accounts, ${dedupIds.filter(id => EXCLUDED_IDS.has(id)).length} excluded)…`,
+      message: `${intersected.length} accounts from "${safeSheet}" ∩ ${platformIds.size} platform accounts…`,
     });
     try {
       const res = await fetch('/api/bod', {
@@ -402,6 +438,30 @@ export default function BOD2Tab() {
     e.target.value = '';
   }
 
+  // ── Upload Dedup File ──────────────────────────────────────────────────────
+  async function handleDedupUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = await parseDedupExcel(file);
+      const totalIds = Object.values(parsed.sheets).reduce((sum, ids) => sum + ids.length, 0);
+      setDedupFile(parsed);
+      // Switch to first sheet of new file
+      setSelectedSheet(Object.keys(parsed.sheets)[0]);
+      // Reset rows so user re-runs with new list
+      setRows([]); setHasRun(false);
+      alert(`✅ Dedup file loaded: "${parsed.fileName}"
+${Object.keys(parsed.sheets).length} sheet(s) · ${totalIds.toLocaleString()} account IDs`);
+    } catch (err) { alert('❌ ' + err.message); }
+    e.target.value = '';
+  }
+
+  function clearDedupFile() {
+    setDedupFile(null);
+    setSelectedSheet(EMBEDDED_SHEET_NAMES[0]);
+    setRows([]); setHasRun(false);
+  }
+
   // ── Derived data ────────────────────────────────────────────────────────────
   const tabCounts = { 'All Spend': 0, BOD: 0, 'Self-Managed': 0, COD: 0, 'Make Good': 0 };
   rows.forEach(r => {
@@ -452,21 +512,44 @@ export default function BOD2Tab() {
       {/* ══ TOP BAR ══ */}
       <div className="bg-slate-800 border-b border-slate-700 px-4 py-2.5 flex items-center gap-3 flex-wrap shrink-0">
 
-        {/* Dedup sheet selector */}
+        {/* Dedup List — upload custom file or use embedded list */}
+        <input type="file" ref={dedupFileRef} accept=".xlsx,.xls" className="hidden" onChange={handleDedupUpload} />
         <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-400 font-medium">Dedup List</span>
-          <select value={selectedSheet} onChange={e => setSelectedSheet(e.target.value)}
-            className="px-2.5 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500">
-            {SHEET_NAMES.map(sh => (
-              <option key={sh} value={sh}>{sh} ({(DEDUP_SHEETS[sh]?.length||0).toLocaleString()} accounts)</option>
-            ))}
-          </select>
+          <span className="text-xs text-slate-400 font-medium shrink-0">Dedup List</span>
+          {dedupFile ? (
+            <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-900/40 border border-blue-700/60 rounded-lg text-xs text-blue-300 font-medium max-w-[180px]">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate" title={dedupFile.fileName}>{dedupFile.fileName}</span>
+              </div>
+              <button onClick={clearDedupFile} title="Remove uploaded file — revert to embedded list"
+                className="text-slate-500 hover:text-red-400 transition-colors">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => dedupFileRef.current?.click()}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 rounded-lg text-xs font-medium transition-colors">
+              <Upload className="w-3.5 h-3.5" /> Upload New List
+            </button>
+          )}
+          {/* Sheet selector — shown when file has multiple sheets */}
+          {sheetNames.length > 1 && (
+            <select value={safeSheet} onChange={e => setSelectedSheet(e.target.value)}
+              className="px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500">
+              {sheetNames.map(sh => (
+                <option key={sh} value={sh}>{sh} ({(activeDedupSheets[sh]?.length||0).toLocaleString()})</option>
+              ))}
+            </select>
+          )}
           <span className="text-xs text-slate-500">
-            {dedupIds.length} in list
-            {allAccounts.length > 0
-              ? <> · <span className="text-emerald-400 font-bold">{allAccounts.filter(a => new Set(dedupIds).has(String(a.id)) && !EXCLUDED_IDS.has(String(a.id))).length}</span> matched on platform</>
-              : loadingAccs ? ' · loading…' : ''}
-            {dedupIds.filter(id => EXCLUDED_IDS.has(id)).length > 0 && <span className="text-red-400"> · {dedupIds.filter(id => EXCLUDED_IDS.has(id)).length} excluded</span>}
+            <span className="text-white font-bold">{dedupIds.length.toLocaleString()}</span> accounts
+            {allAccounts.length > 0 && (
+              <> · <span className="text-emerald-400 font-bold">
+                {allAccounts.filter(a => new Set(dedupIds).has(String(a.id)) && !EXCLUDED_IDS.has(String(a.id))).length}
+              </span> matched</>
+            )}
+            {loadingAccs && <span className="text-amber-400"> · loading…</span>}
           </span>
         </div>
 
@@ -643,10 +726,13 @@ export default function BOD2Tab() {
             <FileSpreadsheet className="w-12 h-12 opacity-20" />
             <div className="text-center space-y-1">
               <p className="text-sm font-medium text-slate-300">BOD 2 — Deduplication Account Report</p>
-              <p className="text-xs">
-                Dedup list <span className="text-blue-400 font-bold">{selectedSheet}</span> · <span className="text-emerald-400 font-bold">{dedupIds.length}</span> accounts
-                {allAccounts.length > 0 && <span className="text-slate-400"> · matched <span className="text-white font-bold">{allAccounts.filter(a => new Set(dedupIds).has(String(a.id)) && !EXCLUDED_IDS.has(String(a.id))).length}</span> on platform</span>}
-                {loadingAccs && <span className="text-amber-400"> · loading platform accounts…</span>}
+              <p className="text-xs text-slate-400">
+                {dedupFile
+                  ? <><span className="text-blue-400 font-bold">{dedupFile.fileName}</span> · sheet: <span className="text-white">{safeSheet}</span></>
+                  : <>Embedded list · <span className="text-white">{safeSheet}</span></>
+                }
+                {' · '}<span className="text-emerald-400 font-bold">{dedupIds.length.toLocaleString()}</span> accounts
+                {allAccounts.length > 0 && <> · <span className="text-white font-bold">{allAccounts.filter(a => new Set(dedupIds).has(String(a.id)) && !EXCLUDED_IDS.has(String(a.id))).length}</span> matched on platform</>}
               </p>
               {refSource === 'none' && <p className="text-xs text-amber-400">⚠ Upload the BOD Ref Sheet to populate grey columns</p>}
             </div>
