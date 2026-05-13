@@ -1,0 +1,116 @@
+// app/api/meta/pacing/route.js
+//
+// POST /api/meta/pacing
+//   body: { accountIds, campaignIds?, adsetIds?, startDate, endDate }
+//   →  { summary, accountTotals, dailyData }   (shape matches existing /api/pacing)
+
+import { getToken }     from 'next-auth/jwt';
+import { NextResponse } from 'next/server';
+import { getInsights, resolveToken } from '../../../../lib/metaClient';
+
+export const dynamic = 'force-dynamic';
+
+const MAX_PARALLEL = 6;
+
+function todayStr()     { return new Date().toISOString().split('T')[0]; }
+function yesterdayStr() { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().split('T')[0]; }
+function daysBetween(a, b) {
+  const start = new Date(a + 'T00:00:00Z');
+  const end   = new Date(b + 'T00:00:00Z');
+  return Math.max(1, Math.round((end - start) / 86_400_000) + 1);
+}
+
+async function inBatches(items, size, fn) {
+  const results = [];
+  for (let i = 0; i < items.length; i += size) {
+    const batch = items.slice(i, i + size);
+    const out   = await Promise.all(batch.map(fn));
+    results.push(...out);
+  }
+  return results;
+}
+
+export async function POST(request) {
+  try {
+    let sessionMetaToken = null;
+    try {
+      const t = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
+      sessionMetaToken = t?.metaAccessToken || null;
+    } catch { /* fine */ }
+
+    let tokenInfo;
+    try { tokenInfo = resolveToken(sessionMetaToken); }
+    catch (err) { return NextResponse.json({ error: err.message }, { status: 401 }); }
+
+    let body;
+    try { body = await request.json(); } catch { body = {}; }
+    const accountIds  = Array.isArray(body.accountIds)  ? body.accountIds  : [];
+    const campaignIds = Array.isArray(body.campaignIds) ? body.campaignIds : null;
+    const adsetIds    = Array.isArray(body.adsetIds)    ? body.adsetIds    : null;
+    const startDate   = body.startDate;
+    const endDate     = body.endDate;
+
+    if (accountIds.length === 0) {
+      return NextResponse.json({
+        summary:       { totalSpend: 0, todaySpend: 0, yesterdaySpend: 0, totalDays: 1, daysElapsed: 1 },
+        accountTotals: [],
+        dailyData:     [],
+      });
+    }
+    if (!startDate || !endDate) {
+      return NextResponse.json({ error: 'startDate and endDate required' }, { status: 400 });
+    }
+
+    let level, filterField, filterIds;
+    if (adsetIds && adsetIds.length > 0) {
+      level = 'adset';    filterField = 'adset.id';    filterIds = adsetIds;
+    } else if (campaignIds && campaignIds.length > 0) {
+      level = 'campaign'; filterField = 'campaign.id'; filterIds = campaignIds;
+    } else {
+      level = 'campaign'; filterField = null;          filterIds = null;
+    }
+
+    const nested = await inBatches(accountIds, MAX_PARALLEL, async (accId) => {
+      try {
+        return await getInsights(tokenInfo, accId, { startDate, endDate, level, filterField, filterIds });
+      } catch (err) {
+        console.error(`[meta/pacing] account ${accId} failed:`, err.message);
+        return [];
+      }
+    });
+    const allRows = nested.flat();
+
+    const today = todayStr();
+    const yest  = yesterdayStr();
+    const byDate = new Map();
+    const byAcc  = new Map();
+
+    for (const r of allRows) {
+      const d = byDate.get(r.date) || { date: r.date, spend: 0, impressions: 0, clicks: 0, leads: 0 };
+      d.spend += r.spend; d.impressions += r.impressions; d.clicks += r.clicks; d.leads += r.leads;
+      byDate.set(r.date, d);
+
+      const a = byAcc.get(r.accountId) || { accountId: r.accountId, totalSpend: 0, todaySpend: 0, yesterdaySpend: 0 };
+      a.totalSpend += r.spend;
+      if (r.date === today) a.todaySpend     += r.spend;
+      if (r.date === yest)  a.yesterdaySpend += r.spend;
+      byAcc.set(r.accountId, a);
+    }
+
+    const dailyData      = Array.from(byDate.values()).sort((x, y) => x.date.localeCompare(y.date));
+    const totalSpend     = dailyData.reduce((s, d) => s + d.spend, 0);
+    const todaySpend     = byDate.get(today)?.spend || 0;
+    const yesterdaySpend = byDate.get(yest)?.spend  || 0;
+    const totalDays      = daysBetween(startDate, endDate);
+    const clampedEnd     = endDate > today ? today : endDate;
+    const daysElapsed    = daysBetween(startDate, clampedEnd);
+
+    return NextResponse.json({
+      summary:       { totalSpend, todaySpend, yesterdaySpend, totalDays, daysElapsed },
+      accountTotals: Array.from(byAcc.values()),
+      dailyData,
+    });
+  } catch (err) {
+    return NextResponse.json({ error: err.message, code: err.code }, { status: 502 });
+  }
+}

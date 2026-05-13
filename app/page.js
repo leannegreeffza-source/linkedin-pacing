@@ -451,6 +451,28 @@ export default function PacingDashboard() {
   const [activeTab, setActiveTab] = useState('pacing'); // 'pacing' | 'bod' | 'bod2' | 'kenya'
   const [showBudgetModal, setShowBudgetModal] = useState(false);
 
+  // ── Platform toggle (LinkedIn / Meta) ─────────────────────────────────────
+  // Default to LinkedIn so existing users see no change on first load. Choice
+  // persists in localStorage. When Meta is active:
+  //  - API calls route to /api/meta/* instead of /api/*
+  //  - In Meta's hierarchy: campaign-groups slot → Meta campaigns,
+  //    campaigns slot → Meta ad sets. The UI labels stay the same so the
+  //    component re-uses without changes.
+  //  - BOD/BOD2/Kenya tabs are hidden — they depend on the LinkedIn-shaped
+  //    recon format. Meta-equivalent recon tabs ship in Stage 2.
+  const [platform, setPlatform] = useState('linkedin');
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('pacing_platform');
+      if (saved === 'meta' || saved === 'linkedin') setPlatform(saved);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem('pacing_platform', platform); } catch {}
+    if (platform === 'meta' && activeTab !== 'pacing') setActiveTab('pacing');
+  }, [platform]);
+  const apiPrefix = platform === 'meta' ? '/api/meta' : '/api';
+
   // Pacing
   const [pacingData, setPacingData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -478,6 +500,21 @@ export default function PacingDashboard() {
     if (session) { loadExclusions().then(() => loadAccounts()); }
   }, [session]);
 
+  // Reload accounts when platform toggles (LinkedIn ↔ Meta). Also clears
+  // selections from the previous platform so we don't briefly try to filter
+  // Meta campaigns by LinkedIn IDs (or vice versa). The if(session) guard
+  // prevents this firing on the initial localStorage hydration before login.
+  useEffect(() => {
+    if (!session) return;
+    setSelectedAccounts([]);
+    setSelectedGroups([]);
+    setSelectedCampaigns([]);
+    setCampaignGroups([]);
+    setCampaigns([]);
+    setPacingData(null);
+    loadAccounts();
+  }, [platform]);
+
   // Load campaign groups/campaigns when accounts change
   useEffect(() => {
     if (selectedAccounts.length > 0) { loadCampaignGroups(); loadCampaigns(); }
@@ -499,7 +536,7 @@ export default function PacingDashboard() {
   async function loadAccounts() {
     setLoadingAccounts(true);
     try {
-      const res = await fetch('/api/accounts');
+      const res = await fetch(`${apiPrefix}/accounts`);
       if (res.ok) {
         const data = await res.json();
         setAccounts(data);
@@ -558,7 +595,12 @@ export default function PacingDashboard() {
   async function loadCampaignGroups() {
     setLoadingGroups(true);
     try {
-      const res = await fetch('/api/campaigngroups', {
+      // On Meta, the "campaign groups" slot in the UI shows Meta campaigns
+      // (the level above ad sets — equivalent to LinkedIn campaign groups
+      // for daily-budget grouping). /api/meta/campaigns returns the same
+      // {id, name} shape so the FilterSection renders without changes.
+      const url = platform === 'meta' ? `${apiPrefix}/campaigns` : '/api/campaigngroups';
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accountIds: selectedAccounts }),
@@ -571,10 +613,18 @@ export default function PacingDashboard() {
   async function loadCampaigns() {
     setLoadingCampaigns(true);
     try {
-      const res = await fetch('/api/campaigns', {
+      // On Meta, the "campaigns" slot in the UI shows Meta ad sets (the
+      // optimisation level — equivalent to LinkedIn campaigns). The body
+      // field name also changes: /api/meta/adsets accepts `campaignIds`
+      // (Meta campaigns); /api/campaigns accepts `campaignGroupIds`.
+      const url  = platform === 'meta' ? `${apiPrefix}/adsets` : '/api/campaigns';
+      const body = platform === 'meta'
+        ? { accountIds: selectedAccounts, campaignIds:      selectedGroups.length > 0 ? selectedGroups : null }
+        : { accountIds: selectedAccounts, campaignGroupIds: selectedGroups.length > 0 ? selectedGroups : null };
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountIds: selectedAccounts, campaignGroupIds: selectedGroups.length > 0 ? selectedGroups : null }),
+        body: JSON.stringify(body),
       });
       if (res.ok) { const data = await res.json(); setCampaigns(data); setSelectedCampaigns(data.map(c => c.id)); }
     } catch (err) { console.error(err); }
@@ -585,16 +635,28 @@ export default function PacingDashboard() {
     if (selectedAccounts.length === 0) return;
     setLoading(true);
     try {
-      const res = await fetch('/api/pacing', {
+      // On Meta the body shape differs slightly:
+      //   - "campaignGroupIds" (LinkedIn) → "campaignIds" (Meta campaigns)
+      //   - "campaignIds"      (LinkedIn) → "adsetIds"    (Meta ad sets)
+      // The response shape from /api/meta/pacing matches /api/pacing exactly
+      // so all of the downstream PacingDashboard rendering is unchanged.
+      const body = platform === 'meta'
+        ? {
+            accountIds:  selectedAccounts,
+            campaignIds: selectedGroups.length    < campaignGroups.length ? selectedGroups    : null,
+            adsetIds:    selectedCampaigns.length < campaigns.length      ? selectedCampaigns : null,
+            startDate, endDate,
+          }
+        : {
+            accountIds:       selectedAccounts,
+            campaignGroupIds: selectedGroups.length    < campaignGroups.length ? selectedGroups    : null,
+            campaignIds:      selectedCampaigns.length < campaigns.length      ? selectedCampaigns : null,
+            startDate, endDate,
+          };
+      const res = await fetch(`${apiPrefix}/pacing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          accountIds: selectedAccounts,
-          campaignGroupIds: selectedGroups.length < campaignGroups.length ? selectedGroups : null,
-          campaignIds: selectedCampaigns.length < campaigns.length ? selectedCampaigns : null,
-          startDate,
-          endDate,
-        }),
+        body: JSON.stringify(body),
       });
       if (res.ok) { setPacingData(await res.json()); setLastRefresh(new Date()); }
     } catch (err) { console.error(err); }
@@ -779,7 +841,9 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
               </div>
               <div>
                 <h1 className="text-xl font-bold text-white">Budget Pacing Tracker</h1>
-                <p className="text-xs text-slate-400">LinkedIn Ad Spend — Daily Pacing</p>
+                <p className="text-xs text-slate-400">
+                  {platform === 'meta' ? 'Meta (Facebook + Instagram)' : 'LinkedIn'} Ad Spend — Daily Pacing
+                </p>
               </div>
             </div>
             {/* Tab navigation */}
@@ -793,32 +857,65 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                 }`}>
                 Pacing
               </button>
+              {/* BOD / BOD2 / Kenya are LinkedIn-only — recon format is shaped
+                  around LinkedIn IDs and the existing dedup sheets. Meta-equivalent
+                  recon tabs ship in Stage 2. Hide the buttons on Meta to avoid
+                  confusion. */}
+              {platform === 'linkedin' && (
+                <>
+                  <button
+                    onClick={() => setActiveTab('bod')}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                      activeTab === 'bod'
+                        ? 'bg-blue-600 text-white shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}>
+                    BOD Report
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('bod2')}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                      activeTab === 'bod2'
+                        ? 'bg-cyan-600 text-white shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}>
+                    BOD 2
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('kenya')}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                      activeTab === 'kenya'
+                        ? 'bg-green-600 text-white shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}>
+                    🇰🇪 Kenya
+                  </button>
+                </>
+              )}
+
+              {/* Visual separator between feature tabs and platform toggle */}
+              <div className="w-px h-6 bg-slate-700 mx-1" />
+
+              {/* Platform toggle — LinkedIn / Meta. Same visual language as
+                  the tab buttons but distinct accent colours so it reads as a
+                  "which data source" control rather than another feature tab. */}
               <button
-                onClick={() => setActiveTab('bod')}
+                onClick={() => setPlatform('linkedin')}
                 className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                  activeTab === 'bod'
-                    ? 'bg-blue-600 text-white shadow'
+                  platform === 'linkedin'
+                    ? 'bg-sky-700 text-white shadow'
                     : 'text-slate-400 hover:text-white'
                 }`}>
-                BOD Report
+                LinkedIn
               </button>
               <button
-                onClick={() => setActiveTab('bod2')}
+                onClick={() => setPlatform('meta')}
                 className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                  activeTab === 'bod2'
-                    ? 'bg-cyan-600 text-white shadow'
+                  platform === 'meta'
+                    ? 'bg-indigo-600 text-white shadow'
                     : 'text-slate-400 hover:text-white'
                 }`}>
-                BOD 2
-              </button>
-              <button
-                onClick={() => setActiveTab('kenya')}
-                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                  activeTab === 'kenya'
-                    ? 'bg-green-600 text-white shadow'
-                    : 'text-slate-400 hover:text-white'
-                }`}>
-                🇰🇪 Kenya
+                Meta
               </button>
             </div>
           </div>
