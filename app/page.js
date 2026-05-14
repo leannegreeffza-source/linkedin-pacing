@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 const BODTab   = dynamic(() => import('./BODTab'),   { ssr: false });
 const BOD2Tab  = dynamic(() => import('./BOD2Tab'),  { ssr: false });
 const KenyaTab = dynamic(() => import('./KenyaTab'), { ssr: false });
+const MetaTab  = dynamic(() => import('./MetaTab'),  { ssr: false });
 import { useSession, signIn, signOut } from 'next-auth/react';
 import {
   TrendingUp, TrendingDown, DollarSign, RefreshCw,
@@ -448,7 +449,7 @@ export default function PacingDashboard() {
 
   // Budget
   const [budget, setBudget] = useState({ totalUSD: '', totalZAR: '', note: '' });
-  const [activeTab, setActiveTab] = useState('pacing'); // 'pacing' | 'bod' | 'bod2' | 'kenya'
+  const [activeTab, setActiveTab] = useState('pacing'); // 'pacing' | 'bod' | 'bod2' | 'kenya' | 'meta'
   const [showBudgetModal, setShowBudgetModal] = useState(false);
 
   // ── Platform toggle (LinkedIn / Meta) ─────────────────────────────────────
@@ -469,7 +470,11 @@ export default function PacingDashboard() {
   }, []);
   useEffect(() => {
     try { localStorage.setItem('pacing_platform', platform); } catch {}
-    if (platform === 'meta' && activeTab !== 'pacing') setActiveTab('pacing');
+    // BOD / BOD2 / Kenya are LinkedIn-only; Meta tab is Meta-only.
+    // When platform changes, drop the user back to 'pacing' if they were on a tab
+    // that isn't available for the newly-selected platform.
+    if (platform === 'meta'    && ['bod','bod2','kenya'].includes(activeTab)) setActiveTab('pacing');
+    if (platform === 'linkedin' && activeTab === 'meta')                       setActiveTab('pacing');
   }, [platform]);
   const apiPrefix = platform === 'meta' ? '/api/meta' : '/api';
 
@@ -891,6 +896,19 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                     🇰🇪 Kenya
                   </button>
                 </>
+              )}
+
+              {/* Meta-only — spend tracker with USD/ZAR split, DoD flag */}
+              {platform === 'meta' && (
+                <button
+                  onClick={() => setActiveTab('meta')}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                    activeTab === 'meta'
+                      ? 'bg-purple-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}>
+                  Meta
+                </button>
               )}
 
               {/* Visual separator between feature tabs and platform toggle */}
@@ -1440,6 +1458,13 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
       {activeTab === 'kenya' && (
         <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
           <KenyaTab />
+        </div>
+      )}
+
+      {/* ── Meta Tab — Facebook/Instagram spend with USD/ZAR currency split & DoD flag ── */}
+      {activeTab === 'meta' && (
+        <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
+          <MetaTab />
         </div>
       )}
 
