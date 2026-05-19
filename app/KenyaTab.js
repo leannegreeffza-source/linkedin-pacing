@@ -228,7 +228,7 @@ async function exportDiageoTemplate(rows, selectedWeeks, selectedBrands, customC
   // Export one file per brand
   let exported = 0;
   for (const brand of brandsToExport) {
-    const brandRows = weekFiltered.filter(r => getBrand(r.campaignName) === brand);
+    const brandRows = weekFiltered.filter(r => (getBrand(r.campaignName) || 'Unknown') === brand);
     if (!brandRows.length) continue;
     const code  = getTaxonomyCode(brand, customCodes);
     const ws    = buildDiageoSheet(XLSX, brandRows, code);
@@ -620,6 +620,9 @@ export default function KenyaTab() {
         const allWeeks  = getWeeksInData(filteredRows);
         // Extract unique brands from current rows
         const allBrands = [...new Set(filteredRows.map(r => getBrand(r.campaignName)).filter(Boolean))].sort();
+        // Add 'Unknown' option if any rows have no detectable brand
+        const hasUnknown = filteredRows.some(r => !getBrand(r.campaignName));
+        const allBrandsWithUnknown = hasUnknown ? [...allBrands, 'Unknown'] : allBrands;
         const selWeeks  = allWeeks.filter(w => diageoWeeks.includes(w.key));
         const canExport = filteredRows.length > 0;
 
@@ -670,26 +673,45 @@ export default function KenyaTab() {
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-xs font-bold text-slate-300 uppercase tracking-wider">Select Brand(s)</p>
                     <div className="flex gap-2">
-                      <button onClick={() => setDiageoB([...allBrands])} className="text-xs text-blue-400 hover:text-blue-300">All</button>
+                      <button onClick={() => setDiageoB([...allBrandsWithUnknown])} className="text-xs text-blue-400 hover:text-blue-300">All</button>
                       <span className="text-slate-600">·</span>
                       <button onClick={() => setDiageoB([])} className="text-xs text-slate-400 hover:text-white">Clear</button>
                     </div>
                   </div>
-                  {allBrands.length === 0
+                  {allBrandsWithUnknown.length === 0
                     ? <p className="text-xs text-slate-500 italic">No brands detected in campaign names</p>
                     : <div className="grid grid-cols-3 gap-1.5">
-                        {allBrands.map(brand => {
-                          const sel  = diageoB.includes(brand);
-                          const code = customCodes[brand] || BRAND_TAXONOMY[brand] || '';
+                        {allBrandsWithUnknown.map(brand => {
+                          const sel      = diageoB.includes(brand);
+                          const isUnknown = brand === 'Unknown';
+                          const code     = customCodes[brand] || BRAND_TAXONOMY[brand] || '';
+                          const rowCount = filteredRows.filter(r =>
+                            isUnknown ? !getBrand(r.campaignName) : getBrand(r.campaignName) === brand
+                          ).length;
                           return (
-                            <div key={brand} className={`rounded-lg border transition-colors ${sel ? 'bg-emerald-900/40 border-emerald-700' : 'bg-slate-700 border-slate-600'}`}>
+                            <div key={brand} className={`rounded-lg border transition-colors ${
+                              sel
+                                ? isUnknown
+                                  ? 'bg-amber-900/40 border-amber-700'
+                                  : 'bg-emerald-900/40 border-emerald-700'
+                                : isUnknown
+                                  ? 'bg-slate-700/60 border-dashed border-slate-500'
+                                  : 'bg-slate-700 border-slate-600'
+                            }`}>
                               <button onClick={() => setDiageoB(prev => sel ? prev.filter(b=>b!==brand) : [...prev, brand])}
                                 className="w-full flex items-center gap-2 px-3 py-2 text-left">
-                                <div className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center ${sel ? 'bg-emerald-500 border-emerald-500' : 'border-slate-500'}`}>
+                                <div className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center ${
+                                  sel
+                                    ? isUnknown ? 'bg-amber-500 border-amber-500' : 'bg-emerald-500 border-emerald-500'
+                                    : 'border-slate-500'
+                                }`}>
                                   {sel && <Check className="w-2.5 h-2.5 text-white" />}
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                  <p className="text-xs font-semibold text-white truncate">{brand}</p>
+                                  <p className={`text-xs font-semibold truncate ${isUnknown ? 'text-amber-300 italic' : 'text-white'}`}>
+                                    {brand}
+                                    {isUnknown && <span className="text-amber-500 text-xs ml-1 font-normal">({rowCount} rows)</span>}
+                                  </p>
                                   {editingCode === brand
                                     ? <input
                                         autoFocus
@@ -721,7 +743,7 @@ export default function KenyaTab() {
                     const exportRows = filteredRows.filter(r => {
                       const [m,d,y]=r.date.split('/'); const dt=new Date(`${y}-${m}-${d}`);
                       const inW = wSel.length===0||wSel.some(w=>dt>=w.start&&dt<=w.end);
-                      const brand=getBrand(r.campaignName);
+                      const brand = getBrand(r.campaignName) || 'Unknown';
                       const inB = diageoB.length===0||diageoB.includes(brand);
                       return inW && inB;
                     });
@@ -760,7 +782,7 @@ export default function KenyaTab() {
                   disabled={!canExport}
                   onClick={() => {
                     const wSel = diageoWeeks.length === 0 ? allWeeks : allWeeks.filter(w => diageoWeeks.includes(w.key));
-                    const bSel = diageoB.length === 0 ? allBrands : diageoB;
+                    const bSel = diageoB.length === 0 ? allBrandsWithUnknown : diageoB;
                     exportDiageoTemplate(filteredRows, wSel, bSel, customCodes);
                     setShowDiageo(false);
                   }}
