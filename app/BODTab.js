@@ -357,6 +357,7 @@ export default function BODTab() {
   // ── UI ───────────────────────────────────────────────────────────────────────
   const [search,          setSearch]          = useState('');
   const [accSearch,       setAccSearch]       = useState('');
+  const [overrideIds,     setOverrideIds]     = useState(() => lsGet('bod_override_ids', [])); // auto-excluded but manually re-included
   const [activeReportTab, setActiveReportTab] = useState('All Spend');
   const [categoryRates,   setCategoryRates]   = useState(() => lsGet('bod_category_rates', {}));
   const [showCatMenu,     setShowCatMenu]     = useState(false);
@@ -428,13 +429,15 @@ export default function BODTab() {
         const dedupIds = dedupFile.sheets[selectedSheet] || [];
         accountIdsToFetch = dedupIds.filter(id =>
           platformIds.has(id) &&
-          !BUILTIN_EXCLUDED_IDS.has(id) &&
+          (!BUILTIN_EXCLUDED_IDS.has(id) || overrideIds.includes(id)) &&
           !excludedIds.includes(id)
         );
         setProgress(p => ({ ...p, message: `Using dedup list "${selectedSheet}" — ${accountIdsToFetch.length} of ${dedupIds.length} accounts matched on platform…` }));
       } else {
         accountIdsToFetch = allAccounts
-          .filter(a => !BUILTIN_EXCLUDED_IDS.has(String(a.id)) && !excludedIds.includes(String(a.id)))
+          .filter(a =>
+            (!BUILTIN_EXCLUDED_IDS.has(String(a.id)) || overrideIds.includes(String(a.id))) &&
+            !excludedIds.includes(String(a.id)))
           .map(a => String(a.id));
       }
 
@@ -543,6 +546,14 @@ export default function BODTab() {
     setRows([]); setHasRun(false);
   }
 
+  function toggleOverride(id) {
+    setOverrideIds(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+      lsSet('bod_override_ids', next);
+      return next;
+    });
+  }
+
   function toggleExclude(id) {
     setExcludedIds(prev => {
       const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
@@ -554,7 +565,7 @@ export default function BODTab() {
   // ── Derived rows ──────────────────────────────────────────────────────────────
   const tabCounts = { 'All Spend': 0, 'All BOD': 0, BOD: 0, 'Self-Managed': 0, COD: 0 };
   rows.forEach(r => {
-    if (BUILTIN_EXCLUDED_IDS.has(String(r.accountId))) return;
+    if (BUILTIN_EXCLUDED_IDS.has(String(r.accountId)) && !overrideIds.includes(String(r.accountId))) return;
     if (excludedIds.includes(String(r.accountId)))      return;
     tabCounts['All Spend']++;
     const t = r.reportTab || 'BOD';
@@ -564,7 +575,7 @@ export default function BODTab() {
   });
 
   const activeRows = rows.filter(r => {
-    if (BUILTIN_EXCLUDED_IDS.has(String(r.accountId))) return false;
+    if (BUILTIN_EXCLUDED_IDS.has(String(r.accountId)) && !overrideIds.includes(String(r.accountId))) return false;
     if (excludedIds.includes(String(r.accountId)))      return false;
     if (activeReportTab === 'All Spend') return true;
     const tab = r.reportTab || 'BOD';
@@ -593,7 +604,8 @@ export default function BODTab() {
 
   const rowCategories = [...new Set(rows.map(r => r.category).filter(Boolean))].sort();
   const activeAccCount = allAccounts.filter(a =>
-    !excludedIds.includes(String(a.id)) && !BUILTIN_EXCLUDED_IDS.has(String(a.id))
+    !excludedIds.includes(String(a.id)) &&
+    (!BUILTIN_EXCLUDED_IDS.has(String(a.id)) || overrideIds.includes(String(a.id)))
   ).length;
 
   // ── Tab colours ───────────────────────────────────────────────────────────────
@@ -717,7 +729,7 @@ export default function BODTab() {
                   Accounts ({allAccounts.length.toLocaleString()} total)
                 </p>
                 <p className="text-xs text-amber-400/80">
-                  {allAccounts.filter(a => BUILTIN_EXCLUDED_IDS.has(String(a.id))).length} auto · {excludedIds.length} manual excluded
+  {allAccounts.filter(a => BUILTIN_EXCLUDED_IDS.has(String(a.id)) && !overrideIds.includes(String(a.id))).length} auto · {excludedIds.length} manual excluded{overrideIds.length > 0 ? ` · ${overrideIds.length} override` : ''}
                 </p>
               </div>
 
@@ -757,29 +769,42 @@ export default function BODTab() {
                         <p className="text-xs text-slate-500 text-center py-4 italic">No accounts match "{accSearch}"</p>
                       )}
                       {visible.map(a => {
-                        const excl     = excludedIds.includes(String(a.id));
-                        const autoExcl = BUILTIN_EXCLUDED_IDS.has(String(a.id));
+                        const excl      = excludedIds.includes(String(a.id));
+                        const autoExcl  = BUILTIN_EXCLUDED_IDS.has(String(a.id));
+                        const overridden = overrideIds.includes(String(a.id)); // auto-excl but manually re-included
+                        const effectivelyExcluded = autoExcl && !overridden;
                         return (
                           <div key={a.id}
                             className={`flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors ${
-                              autoExcl ? 'bg-amber-900/20 border border-amber-800/40 cursor-default' :
-                              excl     ? 'bg-red-900/30 border border-red-800/50 cursor-pointer hover:bg-red-900/50' :
-                                         'bg-slate-700 hover:bg-slate-600 cursor-pointer'
+                              effectivelyExcluded ? 'bg-amber-900/20 border border-amber-800/40 cursor-pointer hover:bg-amber-900/40' :
+                              excl                ? 'bg-red-900/30 border border-red-800/50 cursor-pointer hover:bg-red-900/50' :
+                                                    'bg-slate-700 hover:bg-slate-600 cursor-pointer'
                             }`}
-                            onClick={() => !autoExcl && toggleExclude(String(a.id))}>
-                            {autoExcl
+                            onClick={() => {
+                              if (autoExcl) toggleOverride(String(a.id));
+                              else toggleExclude(String(a.id));
+                            }}>
+                            {effectivelyExcluded
                               ? <EyeOff className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                               : excl
                                 ? <EyeOff className="w-3.5 h-3.5 text-red-400 shrink-0" />
                                 : <Eye   className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                             }
-                            <span className={`text-xs font-mono shrink-0 ${autoExcl ? 'text-amber-400/70' : excl ? 'text-red-400' : 'text-slate-400'}`}>
+                            <span className={`text-xs font-mono shrink-0 ${effectivelyExcluded ? 'text-amber-400/70' : excl ? 'text-red-400' : 'text-slate-400'}`}>
                               {a.id}
                             </span>
-                            <span className={`text-xs flex-1 truncate ${autoExcl ? 'text-amber-400/70 line-through' : excl ? 'text-red-300 line-through' : 'text-white'}`}>
+                            <span className={`text-xs flex-1 truncate ${
+                              effectivelyExcluded ? 'text-amber-400/70 line-through' :
+                              excl                ? 'text-red-300 line-through' : 'text-white'
+                            }`}>
                               {a.name}
                             </span>
-                            {autoExcl && <span className="text-xs text-amber-600 shrink-0 italic">auto</span>}
+                            {effectivelyExcluded && (
+                              <span className="text-xs text-amber-600 shrink-0italic">auto · click to include</span>
+                            )}
+                            {overridden && (
+                              <span className="text-xs text-emerald-400 shrink-0 font-medium">✓ included</span>
+                            )}
                             {!autoExcl && (
                               <span className={`text-xs shrink-0 font-medium ${excl ? 'text-red-400' : 'text-emerald-500'}`}>
                                 {excl ? 'Hidden' : 'Shown'}
