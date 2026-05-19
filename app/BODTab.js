@@ -105,6 +105,36 @@ async function loadXLSX() {
   });
 }
 
+// ─── Parse Dedup Excel file ──────────────────────────────────────────────────
+// Reads every sheet, extracts account IDs from column A (row 2+)
+async function parseDedupExcel(file) {
+  const XLSX = await loadXLSX();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb    = XLSX.read(e.target.result, { type: 'array' });
+        const sheets = {};
+        wb.SheetNames.forEach(name => {
+          const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true });
+          const ids  = [];
+          for (let i = 1; i < rows.length; i++) {
+            const v = rows[i][0];
+            if (v != null && v !== '') {
+              const id = String(Math.round(Number(v)));
+              if (/^\d+$/.test(id)) ids.push(id);
+            }
+          }
+          if (ids.length > 0) sheets[name] = ids;
+        });
+        if (Object.keys(sheets).length === 0) throw new Error('No account IDs found in file');
+        resolve({ sheets, fileName: file.name });
+      } catch (err) { reject(err); }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 // ─── Parse BOD Reference Sheet ───────────────────────────────────────────────
 // Sheet: NEW_2023_BOD Reference Shee (2)
 // Col mapping (0-indexed):
@@ -332,9 +362,14 @@ export default function BODTab() {
 
   const REPORT_TABS = ['All Spend', 'BOD', 'Self-Managed', 'COD', 'Make Good'];
 
-  const refFileRef = useRef();
-  const menuRef    = useRef();
-  const catMenuRef = useRef();
+  const refFileRef  = useRef();
+  const dedupFileRef = useRef();
+  const menuRef     = useRef();
+  const catMenuRef  = useRef();
+
+  // ── Dedup list state ──────────────────────────────────────────────────────────
+  const [dedupFile,     setDedupFile]     = useState(null);
+  const [selectedSheet, setSelectedSheet] = useState('');
 
   // ── Restore saved ref data on mount ──────────────────────────────────────────
   useEffect(() => {
@@ -382,10 +417,25 @@ export default function BODTab() {
     setLoading(true); setError(''); setHasRun(true);
     setProgress({ phase: 1, pct: 0, message: 'Starting…' });
     try {
-      // Filter accounts: remove exclusion list + manual exclusions
-      const accountIdsToFetch = allAccounts
-        .filter(a => !BUILTIN_EXCLUDED_IDS.has(String(a.id)) && !excludedIds.includes(String(a.id)))
-        .map(a => String(a.id));
+      // Build account list:
+      // If a dedup file is uploaded → intersect platform accounts with dedup list
+      // Otherwise → use all platform accounts
+      const platformIds = new Set(allAccounts.map(a => String(a.id)));
+      let accountIdsToFetch;
+
+      if (dedupFile && selectedSheet) {
+        const dedupIds = dedupFile.sheets[selectedSheet] || [];
+        accountIdsToFetch = dedupIds.filter(id =>
+          platformIds.has(id) &&
+          !BUILTIN_EXCLUDED_IDS.has(id) &&
+          !excludedIds.includes(id)
+        );
+        setProgress(p => ({ ...p, message: `Using dedup list "${selectedSheet}" — ${accountIdsToFetch.length} of ${dedupIds.length} accounts matched on platform…` }));
+      } else {
+        accountIdsToFetch = allAccounts
+          .filter(a => !BUILTIN_EXCLUDED_IDS.has(String(a.id)) && !excludedIds.includes(String(a.id)))
+          .map(a => String(a.id));
+      }
 
       if (!accountIdsToFetch.length) {
         setError('No accounts to fetch after exclusions.');
@@ -470,6 +520,26 @@ export default function BODTab() {
       alert(`✅ BOD Ref Sheet loaded\nSheet: "${parsed.sheetName}"\n${parsed.rowCount} rows → ${entryCount} account+group entries`);
     } catch (err) { alert('❌ ' + err.message); }
     e.target.value = '';
+  }
+
+  // ── Upload Dedup File ────────────────────────────────────────────────────────
+  async function handleDedupUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed    = await parseDedupExcel(file);
+      const totalIds  = Object.values(parsed.sheets).reduce((s, ids) => s + ids.length, 0);
+      setDedupFile(parsed);
+      setSelectedSheet(Object.keys(parsed.sheets)[0]);
+      setRows([]); setHasRun(false);
+      alert(`✅ Dedup list loaded: "${parsed.fileName}"\n${Object.keys(parsed.sheets).length} sheet(s) · ${totalIds.toLocaleString()} account IDs`);
+    } catch (err) { alert('❌ ' + err.message); }
+    e.target.value = '';
+  }
+
+  function clearDedupFile() {
+    setDedupFile(null); setSelectedSheet('');
+    setRows([]); setHasRun(false);
   }
 
   function toggleExclude(id) {
@@ -573,6 +643,34 @@ export default function BODTab() {
         </button>
 
         <div className="flex-1" />
+
+        {/* Dedup List upload — optional, restricts which accounts are queried */}
+        <input type="file" ref={dedupFileRef} accept=".xlsx,.xls" className="hidden" onChange={handleDedupUpload} />
+        {dedupFile ? (
+          <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-900/40 border border-blue-700/60 rounded-lg text-xs text-blue-300 font-medium">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate max-w-[140px]" title={dedupFile.fileName}>{dedupFile.fileName}</span>
+            </div>
+            {Object.keys(dedupFile.sheets).length > 1 && (
+              <select value={selectedSheet} onChange={e => setSelectedSheet(e.target.value)}
+                className="px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none">
+                {Object.keys(dedupFile.sheets).map(sh => (
+                  <option key={sh} value={sh}>{sh} ({dedupFile.sheets[sh].length})</option>
+                ))}
+              </select>
+            )}
+            <button onClick={clearDedupFile} title="Remove dedup filter" className="text-slate-500 hover:text-red-400">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : (
+          <button onClick={() => dedupFileRef.current?.click()}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 rounded-lg text-xs font-medium transition-colors"
+            title="Optionally upload a dedup list to restrict which accounts are queried">
+            <Upload className="w-3.5 h-3.5" /> Dedup List
+          </button>
+        )}
 
         {/* Ref Sheet upload button */}
         <input type="file" ref={refFileRef} accept=".xlsx,.xls" className="hidden" onChange={handleRefUpload} />
