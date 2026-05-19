@@ -158,6 +158,10 @@ function buildDiageoSheet(XLSX, brandRows, code) {
     r.video75     ?? null, r.video100    ?? null, r.vcr         ?? null,
     r.appDownloads ?? null, r.custom1    ?? null, r.custom2     ?? null,
   ]);
+
+  // Build the worksheet
+  const ws = XLSX.utils.aoa_to_sheet([INSTR, HEADERS, ...dataRows]);
+
   // Column widths
   const colWidths = [12,28,14,60,60,18,18,12,14,10,14,12,12,16,20,20,20,20,24,14,26,26];
   ws['!cols'] = colWidths.map(w => ({ wch: w }));
