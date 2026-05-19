@@ -182,8 +182,8 @@ async function parseRefExcel(file) {
 
           // reportTab logic
           let reportTab = 'BOD';
-          if      (billingType === 'BOI')                               reportTab = 'COD';  // remapped
-          else if (billingType === 'BUF')                               reportTab = 'Make Good';  // remapped
+          if      (billingType === 'COD')                               reportTab = 'COD';
+          // BOI/BUF/Make Good → default to BOD
           else if (billingType === 'BOD' && managedType === 'Self-Managed') reportTab = 'Self-Managed';
           else if (billingType === 'BOD')                               reportTab = 'BOD';
 
@@ -360,7 +360,7 @@ export default function BODTab() {
   const [categoryRates,   setCategoryRates]   = useState(() => lsGet('bod_category_rates', {}));
   const [showCatMenu,     setShowCatMenu]     = useState(false);
 
-  const REPORT_TABS = ['All Spend', 'BOD', 'Self-Managed', 'COD', 'Make Good'];
+  const REPORT_TABS = ['All Spend', 'All BOD', 'BOD', 'Self-Managed', 'COD'];
 
   const refFileRef  = useRef();
   const dedupFileRef = useRef();
@@ -551,12 +551,14 @@ export default function BODTab() {
   }
 
   // ── Derived rows ──────────────────────────────────────────────────────────────
-  const tabCounts = { 'All Spend': 0, BOD: 0, 'Self-Managed': 0, COD: 0, 'Make Good': 0 };
+  const tabCounts = { 'All Spend': 0, 'All BOD': 0, BOD: 0, 'Self-Managed': 0, COD: 0 };
   rows.forEach(r => {
     if (BUILTIN_EXCLUDED_IDS.has(String(r.accountId))) return;
     if (excludedIds.includes(String(r.accountId)))      return;
     tabCounts['All Spend']++;
     const t = r.reportTab || 'BOD';
+    // All BOD = BOD + Self-Managed (all dedup accounts)
+    if (t === 'BOD' || t === 'Self-Managed') tabCounts['All BOD']++;
     if (tabCounts[t] != null) tabCounts[t]++;
   });
 
@@ -564,7 +566,9 @@ export default function BODTab() {
     if (BUILTIN_EXCLUDED_IDS.has(String(r.accountId))) return false;
     if (excludedIds.includes(String(r.accountId)))      return false;
     if (activeReportTab === 'All Spend') return true;
-    return (r.reportTab || 'BOD') === activeReportTab;
+    const tab = r.reportTab || 'BOD';
+    if (activeReportTab === 'All BOD') return tab === 'BOD' || tab === 'Self-Managed';
+    return tab === activeReportTab;
   });
 
   const filteredRows = search
@@ -594,10 +598,10 @@ export default function BODTab() {
   // ── Tab colours ───────────────────────────────────────────────────────────────
   const TAB_ACTIVE = {
     'All Spend':    'bg-slate-600 text-white',
+    'All BOD':      'bg-blue-800 text-white',
     'BOD':          'bg-blue-600 text-white',
     'Self-Managed': 'bg-emerald-600 text-white',
     'COD':          'bg-purple-600 text-white',
-    'Make Good':    'bg-amber-600 text-white',
   };
 
   // ════════════════════════════════════════════════════════════════════════════════
