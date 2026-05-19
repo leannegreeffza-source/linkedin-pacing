@@ -356,6 +356,7 @@ export default function BODTab() {
 
   // ── UI ───────────────────────────────────────────────────────────────────────
   const [search,          setSearch]          = useState('');
+  const [accSearch,       setAccSearch]       = useState('');
   const [activeReportTab, setActiveReportTab] = useState('All Spend');
   const [categoryRates,   setCategoryRates]   = useState(() => lsGet('bod_category_rates', {}));
   const [showCatMenu,     setShowCatMenu]     = useState(false);
@@ -708,41 +709,122 @@ export default function BODTab() {
             <ChevronDown className="w-3 h-3 text-slate-400" />
           </button>
           {showAccMenu && (
-            <div className="absolute right-0 top-9 z-30 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-80 p-3">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1 px-1">
-                Accounts ({allAccounts.length.toLocaleString()} total)
-              </p>
-              <p className="text-xs text-amber-400/80 px-1 mb-2">
-                {allAccounts.filter(a => BUILTIN_EXCLUDED_IDS.has(String(a.id))).length} auto-excluded · {excludedIds.length} manually excluded
-              </p>
-              <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
-                {allAccounts.map(a => {
-                  const excl     = excludedIds.includes(String(a.id));
-                  const autoExcl = BUILTIN_EXCLUDED_IDS.has(String(a.id));
-                  return (
-                    <div key={a.id}
-                      className={`flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors ${
-                        autoExcl ? 'bg-amber-900/20 border border-amber-800/40 cursor-default' :
-                        excl     ? 'bg-red-900/30 border border-red-800/50 cursor-pointer' :
-                                   'bg-slate-700 hover:bg-slate-600 cursor-pointer'
-                      }`}
-                      onClick={() => !autoExcl && toggleExclude(String(a.id))}>
-                      {autoExcl
-                        ? <EyeOff className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                        : excl
-                          ? <EyeOff className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                          : <Eye   className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      }
-                      <span className={`text-xs flex-1 truncate ${autoExcl ? 'text-amber-400/70 line-through' : excl ? 'text-red-300 line-through' : 'text-white'}`}>{a.name}</span>
-                      <span className="text-xs text-slate-500 font-mono shrink-0">{a.id}</span>
-                      {autoExcl && <span className="text-xs text-amber-600 shrink-0">auto</span>}
-                    </div>
-                  );
-                })}
+            <div className="absolute right-0 top-9 z-30 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-96 p-3">
+
+              {/* Header */}
+              <div className="flex items-center justify-between mb-2 px-1">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  Accounts ({allAccounts.length.toLocaleString()} total)
+                </p>
+                <p className="text-xs text-amber-400/80">
+                  {allAccounts.filter(a => BUILTIN_EXCLUDED_IDS.has(String(a.id))).length} auto · {excludedIds.length} manual excluded
+                </p>
               </div>
-              <div className="flex gap-2 mt-2.5">
+
+              {/* Search box */}
+              <div className="relative mb-2">
+                <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-slate-400" />
+                <input
+                  value={accSearch}
+                  onChange={e => setAccSearch(e.target.value)}
+                  placeholder="Search by account ID or name…"
+                  className="w-full pl-8 pr-7 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+                {accSearch && (
+                  <button onClick={() => setAccSearch('')} className="absolute right-2 top-2 text-slate-400 hover:text-white">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Account list — filtered by search */}
+              {(() => {
+                const s = accSearch.toLowerCase().trim();
+                const visible = allAccounts.filter(a =>
+                  !s ||
+                  String(a.id).includes(s) ||
+                  (a.name || '').toLowerCase().includes(s)
+                );
+                return (
+                  <>
+                    {s && (
+                      <p className="text-xs text-slate-500 px-1 mb-1">
+                        {visible.length} result{visible.length !== 1 ? 's' : ''} for "{accSearch}"
+                      </p>
+                    )}
+                    <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
+                      {visible.length === 0 && (
+                        <p className="text-xs text-slate-500 text-center py-4 italic">No accounts match "{accSearch}"</p>
+                      )}
+                      {visible.map(a => {
+                        const excl     = excludedIds.includes(String(a.id));
+                        const autoExcl = BUILTIN_EXCLUDED_IDS.has(String(a.id));
+                        return (
+                          <div key={a.id}
+                            className={`flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors ${
+                              autoExcl ? 'bg-amber-900/20 border border-amber-800/40 cursor-default' :
+                              excl     ? 'bg-red-900/30 border border-red-800/50 cursor-pointer hover:bg-red-900/50' :
+                                         'bg-slate-700 hover:bg-slate-600 cursor-pointer'
+                            }`}
+                            onClick={() => !autoExcl && toggleExclude(String(a.id))}>
+                            {autoExcl
+                              ? <EyeOff className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                              : excl
+                                ? <EyeOff className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                                : <Eye   className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                            }
+                            <span className={`text-xs font-mono shrink-0 ${autoExcl ? 'text-amber-400/70' : excl ? 'text-red-400' : 'text-slate-400'}`}>
+                              {a.id}
+                            </span>
+                            <span className={`text-xs flex-1 truncate ${autoExcl ? 'text-amber-400/70 line-through' : excl ? 'text-red-300 line-through' : 'text-white'}`}>
+                              {a.name}
+                            </span>
+                            {autoExcl && <span className="text-xs text-amber-600 shrink-0 italic">auto</span>}
+                            {!autoExcl && (
+                              <span className={`text-xs shrink-0 font-medium ${excl ? 'text-red-400' : 'text-emerald-500'}`}>
+                                {excl ? 'Hidden' : 'Shown'}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                );
+              })()}
+
+              {/* Footer actions */}
+              <div className="flex gap-2 mt-2.5 pt-2 border-t border-slate-700">
                 <button onClick={() => { setExcludedIds([]); lsSet('bod_excluded_ids', []); }}
-                  className="flex-1 py-1.5 bg-slate-600 hover:bg-slate-500 text-slate-200 text-xs rounded-lg">Include All</button>
+                  className="flex-1 py-1.5 bg-slate-600 hover:bg-slate-500 text-slate-200 text-xs rounded-lg transition-colors">
+                  Show All
+                </button>
+                {accSearch && (
+                  <button
+                    onClick={() => {
+                      const s = accSearch.toLowerCase().trim();
+                      const matches = allAccounts
+                        .filter(a => !BUILTIN_EXCLUDED_IDS.has(String(a.id)) &&
+                          (String(a.id).includes(s) || (a.name||'').toLowerCase().includes(s)))
+                        .map(a => String(a.id));
+                      const allHidden = matches.every(id => excludedIds.includes(id));
+                      if (allHidden) {
+                        // Show all matching
+                        setExcludedIds(prev => { const n = prev.filter(id => !matches.includes(id)); lsSet('bod_excluded_ids', n); return n; });
+                      } else {
+                        // Hide all matching
+                        setExcludedIds(prev => { const n = [...new Set([...prev, ...matches])]; lsSet('bod_excluded_ids', n); return n; });
+                      }
+                    }}
+                    className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs rounded-lg transition-colors">
+                    {(() => {
+                      const s = accSearch.toLowerCase().trim();
+                      const matches = allAccounts.filter(a => !BUILTIN_EXCLUDED_IDS.has(String(a.id)) &&
+                        (String(a.id).includes(s) || (a.name||'').toLowerCase().includes(s))).map(a => String(a.id));
+                      return matches.every(id => excludedIds.includes(id)) ? 'Show Results' : 'Hide Results';
+                    })()}
+                  </button>
+                )}
               </div>
             </div>
           )}
