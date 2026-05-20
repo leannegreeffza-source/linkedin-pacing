@@ -5,7 +5,6 @@ import dynamic from 'next/dynamic';
 const BODTab   = dynamic(() => import('./BODTab'),   { ssr: false });
 const BOD2Tab  = dynamic(() => import('./BOD2Tab'),  { ssr: false });
 const KenyaTab = dynamic(() => import('./KenyaTab'), { ssr: false });
-const MetaTab  = dynamic(() => import('./MetaTab'),  { ssr: false });
 import { useSession, signIn, signOut } from 'next-auth/react';
 import {
   TrendingUp, TrendingDown, DollarSign, RefreshCw,
@@ -170,6 +169,15 @@ function SignInScreen() {
         <button onClick={() => signIn('linkedin')}
           className="w-full bg-blue-600 text-white py-4 rounded-xl font-semibold hover:bg-blue-700 transition-colors">
           Sign in with LinkedIn
+        </button>
+        <div className="relative my-4">
+          <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-600" /></div>
+          <div className="relative flex justify-center"><span className="bg-slate-800 px-3 text-xs text-slate-500">optional</span></div>
+        </div>
+        <button onClick={() => signIn('facebook')}
+          className="w-full bg-[#1877F2] text-white py-3 rounded-xl font-semibold hover:bg-[#166FE5] transition-colors flex items-center justify-center gap-2">
+          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+          Also connect Facebook (Meta ads)
         </button>
       </div>
     </div>
@@ -449,34 +457,8 @@ export default function PacingDashboard() {
 
   // Budget
   const [budget, setBudget] = useState({ totalUSD: '', totalZAR: '', note: '' });
-  const [activeTab, setActiveTab] = useState('pacing'); // 'pacing' | 'bod' | 'bod2' | 'kenya' | 'meta'
+  const [activeTab, setActiveTab] = useState('pacing'); // 'pacing' | 'bod' | 'bod2' | 'kenya'
   const [showBudgetModal, setShowBudgetModal] = useState(false);
-
-  // ── Platform toggle (LinkedIn / Meta) ─────────────────────────────────────
-  // Default to LinkedIn so existing users see no change on first load. Choice
-  // persists in localStorage. When Meta is active:
-  //  - API calls route to /api/meta/* instead of /api/*
-  //  - In Meta's hierarchy: campaign-groups slot → Meta campaigns,
-  //    campaigns slot → Meta ad sets. The UI labels stay the same so the
-  //    component re-uses without changes.
-  //  - BOD/BOD2/Kenya tabs are hidden — they depend on the LinkedIn-shaped
-  //    recon format. Meta-equivalent recon tabs ship in Stage 2.
-  const [platform, setPlatform] = useState('linkedin');
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem('pacing_platform');
-      if (saved === 'meta' || saved === 'linkedin') setPlatform(saved);
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try { localStorage.setItem('pacing_platform', platform); } catch {}
-    // BOD / BOD2 / Kenya are LinkedIn-only; Meta tab is Meta-only.
-    // When platform changes, drop the user back to 'pacing' if they were on a tab
-    // that isn't available for the newly-selected platform.
-    if (platform === 'meta'    && ['bod','bod2','kenya'].includes(activeTab)) setActiveTab('pacing');
-    if (platform === 'linkedin' && activeTab === 'meta')                       setActiveTab('pacing');
-  }, [platform]);
-  const apiPrefix = platform === 'meta' ? '/api/meta' : '/api';
 
   // Pacing
   const [pacingData, setPacingData] = useState(null);
@@ -505,21 +487,6 @@ export default function PacingDashboard() {
     if (session) { loadExclusions().then(() => loadAccounts()); }
   }, [session]);
 
-  // Reload accounts when platform toggles (LinkedIn ↔ Meta). Also clears
-  // selections from the previous platform so we don't briefly try to filter
-  // Meta campaigns by LinkedIn IDs (or vice versa). The if(session) guard
-  // prevents this firing on the initial localStorage hydration before login.
-  useEffect(() => {
-    if (!session) return;
-    setSelectedAccounts([]);
-    setSelectedGroups([]);
-    setSelectedCampaigns([]);
-    setCampaignGroups([]);
-    setCampaigns([]);
-    setPacingData(null);
-    loadAccounts();
-  }, [platform]);
-
   // Load campaign groups/campaigns when accounts change
   useEffect(() => {
     if (selectedAccounts.length > 0) { loadCampaignGroups(); loadCampaigns(); }
@@ -541,7 +508,7 @@ export default function PacingDashboard() {
   async function loadAccounts() {
     setLoadingAccounts(true);
     try {
-      const res = await fetch(`${apiPrefix}/accounts`);
+      const res = await fetch('/api/accounts');
       if (res.ok) {
         const data = await res.json();
         setAccounts(data);
@@ -600,12 +567,7 @@ export default function PacingDashboard() {
   async function loadCampaignGroups() {
     setLoadingGroups(true);
     try {
-      // On Meta, the "campaign groups" slot in the UI shows Meta campaigns
-      // (the level above ad sets — equivalent to LinkedIn campaign groups
-      // for daily-budget grouping). /api/meta/campaigns returns the same
-      // {id, name} shape so the FilterSection renders without changes.
-      const url = platform === 'meta' ? `${apiPrefix}/campaigns` : '/api/campaigngroups';
-      const res = await fetch(url, {
+      const res = await fetch('/api/campaigngroups', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accountIds: selectedAccounts }),
@@ -618,18 +580,10 @@ export default function PacingDashboard() {
   async function loadCampaigns() {
     setLoadingCampaigns(true);
     try {
-      // On Meta, the "campaigns" slot in the UI shows Meta ad sets (the
-      // optimisation level — equivalent to LinkedIn campaigns). The body
-      // field name also changes: /api/meta/adsets accepts `campaignIds`
-      // (Meta campaigns); /api/campaigns accepts `campaignGroupIds`.
-      const url  = platform === 'meta' ? `${apiPrefix}/adsets` : '/api/campaigns';
-      const body = platform === 'meta'
-        ? { accountIds: selectedAccounts, campaignIds:      selectedGroups.length > 0 ? selectedGroups : null }
-        : { accountIds: selectedAccounts, campaignGroupIds: selectedGroups.length > 0 ? selectedGroups : null };
-      const res = await fetch(url, {
+      const res = await fetch('/api/campaigns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ accountIds: selectedAccounts, campaignGroupIds: selectedGroups.length > 0 ? selectedGroups : null }),
       });
       if (res.ok) { const data = await res.json(); setCampaigns(data); setSelectedCampaigns(data.map(c => c.id)); }
     } catch (err) { console.error(err); }
@@ -640,28 +594,16 @@ export default function PacingDashboard() {
     if (selectedAccounts.length === 0) return;
     setLoading(true);
     try {
-      // On Meta the body shape differs slightly:
-      //   - "campaignGroupIds" (LinkedIn) → "campaignIds" (Meta campaigns)
-      //   - "campaignIds"      (LinkedIn) → "adsetIds"    (Meta ad sets)
-      // The response shape from /api/meta/pacing matches /api/pacing exactly
-      // so all of the downstream PacingDashboard rendering is unchanged.
-      const body = platform === 'meta'
-        ? {
-            accountIds:  selectedAccounts,
-            campaignIds: selectedGroups.length    < campaignGroups.length ? selectedGroups    : null,
-            adsetIds:    selectedCampaigns.length < campaigns.length      ? selectedCampaigns : null,
-            startDate, endDate,
-          }
-        : {
-            accountIds:       selectedAccounts,
-            campaignGroupIds: selectedGroups.length    < campaignGroups.length ? selectedGroups    : null,
-            campaignIds:      selectedCampaigns.length < campaigns.length      ? selectedCampaigns : null,
-            startDate, endDate,
-          };
-      const res = await fetch(`${apiPrefix}/pacing`, {
+      const res = await fetch('/api/pacing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          accountIds: selectedAccounts,
+          campaignGroupIds: selectedGroups.length < campaignGroups.length ? selectedGroups : null,
+          campaignIds: selectedCampaigns.length < campaigns.length ? selectedCampaigns : null,
+          startDate,
+          endDate,
+        }),
       });
       if (res.ok) { setPacingData(await res.json()); setLastRefresh(new Date()); }
     } catch (err) { console.error(err); }
@@ -846,9 +788,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
               </div>
               <div>
                 <h1 className="text-xl font-bold text-white">Budget Pacing Tracker</h1>
-                <p className="text-xs text-slate-400">
-                  {platform === 'meta' ? 'Meta (Facebook + Instagram)' : 'LinkedIn'} Ad Spend — Daily Pacing
-                </p>
+                <p className="text-xs text-slate-400">LinkedIn Ad Spend — Daily Pacing</p>
               </div>
             </div>
             {/* Tab navigation */}
@@ -862,78 +802,32 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                 }`}>
                 Pacing
               </button>
-              {/* BOD / BOD2 / Kenya are LinkedIn-only — recon format is shaped
-                  around LinkedIn IDs and the existing dedup sheets. Meta-equivalent
-                  recon tabs ship in Stage 2. Hide the buttons on Meta to avoid
-                  confusion. */}
-              {platform === 'linkedin' && (
-                <>
-                  <button
-                    onClick={() => setActiveTab('bod')}
-                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                      activeTab === 'bod'
-                        ? 'bg-blue-600 text-white shadow'
-                        : 'text-slate-400 hover:text-white'
-                    }`}>
-                    BOD Report
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('bod2')}
-                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                      activeTab === 'bod2'
-                        ? 'bg-cyan-600 text-white shadow'
-                        : 'text-slate-400 hover:text-white'
-                    }`}>
-                    BOD 2
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('kenya')}
-                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                      activeTab === 'kenya'
-                        ? 'bg-green-600 text-white shadow'
-                        : 'text-slate-400 hover:text-white'
-                    }`}>
-                    🇰🇪 Kenya
-                  </button>
-                </>
-              )}
-
-              {/* Meta-only — spend tracker with USD/ZAR split, DoD flag */}
-              {platform === 'meta' && (
-                <button
-                  onClick={() => setActiveTab('meta')}
-                  className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                    activeTab === 'meta'
-                      ? 'bg-purple-600 text-white shadow'
-                      : 'text-slate-400 hover:text-white'
-                  }`}>
-                  Meta
-                </button>
-              )}
-
-              {/* Visual separator between feature tabs and platform toggle */}
-              <div className="w-px h-6 bg-slate-700 mx-1" />
-
-              {/* Platform toggle — LinkedIn / Meta. Same visual language as
-                  the tab buttons but distinct accent colours so it reads as a
-                  "which data source" control rather than another feature tab. */}
               <button
-                onClick={() => setPlatform('linkedin')}
+                onClick={() => setActiveTab('bod')}
                 className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                  platform === 'linkedin'
-                    ? 'bg-sky-700 text-white shadow'
+                  activeTab === 'bod'
+                    ? 'bg-blue-600 text-white shadow'
                     : 'text-slate-400 hover:text-white'
                 }`}>
-                LinkedIn
+                BOD Report
               </button>
               <button
-                onClick={() => setPlatform('meta')}
+                onClick={() => setActiveTab('bod2')}
                 className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                  platform === 'meta'
-                    ? 'bg-indigo-600 text-white shadow'
+                  activeTab === 'bod2'
+                    ? 'bg-cyan-600 text-white shadow'
                     : 'text-slate-400 hover:text-white'
                 }`}>
-                Meta
+                BOD 2
+              </button>
+              <button
+                onClick={() => setActiveTab('kenya')}
+                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                  activeTab === 'kenya'
+                    ? 'bg-green-600 text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}>
+                🇰🇪 Kenya
               </button>
             </div>
           </div>
@@ -1458,13 +1352,6 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
       {activeTab === 'kenya' && (
         <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
           <KenyaTab />
-        </div>
-      )}
-
-      {/* ── Meta Tab — Facebook/Instagram spend with USD/ZAR currency split & DoD flag ── */}
-      {activeTab === 'meta' && (
-        <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
-          <MetaTab />
         </div>
       )}
 
