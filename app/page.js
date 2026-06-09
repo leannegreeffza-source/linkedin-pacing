@@ -1024,6 +1024,8 @@ export default function PacingDashboard() {
     } catch (err) { console.error(err); }
     setLoadingPrev(false);
   }
+
+  function handleBudgetSave(newBudget) {
     setBudget(newBudget);
     saveBudget(budgetYear, budgetMonth, newBudget);
   }
