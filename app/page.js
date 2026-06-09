@@ -301,7 +301,22 @@ function AIReportModal({ show, onClose, reportText, loading }) {
 }
 
 // ── Daily Chart ───────────────────────────────────────────────────────────────
-function DailyChart({ dailyData, idealDailySpend }) {
+// ── Metric helpers ────────────────────────────────────────────────────────────
+function calcCTR(clicks, impressions) {
+  if (!impressions) return 0;
+  return (clicks / impressions) * 100;
+}
+function calcCPM(spend, impressions) {
+  if (!impressions) return 0;
+  return (spend / impressions) * 1000;
+}
+function calcCPC(spend, clicks) {
+  if (!clicks) return 0;
+  return spend / clicks;
+}
+
+// ── DailyChart (with optional forecast line) ──────────────────────────────────
+function DailyChart({ dailyData, idealDailySpend, forecastData, budgetUSD }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
 
@@ -311,9 +326,22 @@ function DailyChart({ dailyData, idealDailySpend }) {
       const el = canvasRef.current;
       if (!el || !window.Chart) return;
       if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; }
-      const labels = dailyData.map(d => d.date.slice(5)); // MM-DD
+
+      // Combine actual + forecast labels
+      const allLabels = [
+        ...dailyData.map(d => d.date.slice(5)),
+        ...(forecastData || []).map(d => d.date.slice(5)),
+      ];
+      const actualLen = dailyData.length;
+      const totalLen  = allLabels.length;
+
       const spends = dailyData.map(d => parseFloat(d.spend.toFixed(2)));
-      const idealLine = dailyData.map(() => parseFloat((idealDailySpend || 0).toFixed(2)));
+      const forecastSpends = forecastData ? forecastData.map(d => parseFloat(d.forecastSpend.toFixed(2))) : [];
+      // Pad actual to full length with null so bars don't extend into forecast zone
+      const paddedSpends = [...spends, ...new Array(totalLen - actualLen).fill(null)];
+      // Pad forecast to full length — null for actual days
+      const paddedForecast = [...new Array(actualLen).fill(null), ...forecastSpends];
+
       const barColors = dailyData.map(d => {
         if (!idealDailySpend) return 'rgba(99,102,241,0.8)';
         const ratio = d.spend / idealDailySpend;
@@ -321,24 +349,55 @@ function DailyChart({ dailyData, idealDailySpend }) {
         if (ratio < 0.9) return 'rgba(251,191,36,0.85)';
         return 'rgba(248,113,113,0.85)';
       });
+
+      const idealLine = allLabels.map(() => parseFloat((idealDailySpend || 0).toFixed(2)));
+
+      const datasets = [
+        { label: 'Daily Spend ($)', data: paddedSpends, backgroundColor: barColors, borderRadius: 4, order: 3, type: 'bar' },
+        { label: 'Ideal Daily ($)', data: idealLine, type: 'line', borderColor: 'rgba(147,197,253,0.7)', borderWidth: 2, borderDash: [5, 4], pointRadius: 0, fill: false, order: 1 },
+      ];
+
+      if (forecastData && forecastData.length > 0) {
+        datasets.push({
+          label: 'Forecast ($)',
+          data: paddedForecast,
+          type: 'line',
+          borderColor: 'rgba(167,139,250,0.9)',
+          borderWidth: 2,
+          borderDash: [8, 4],
+          pointRadius: 3,
+          pointBackgroundColor: 'rgba(167,139,250,0.9)',
+          fill: false,
+          order: 2,
+        });
+      }
+
+      if (budgetUSD > 0) {
+        datasets.push({
+          label: 'Budget ($)',
+          data: allLabels.map(() => parseFloat(budgetUSD.toFixed(2))),
+          type: 'line',
+          borderColor: 'rgba(248,113,113,0.6)',
+          borderWidth: 1.5,
+          borderDash: [3, 3],
+          pointRadius: 0,
+          fill: false,
+          order: 0,
+        });
+      }
+
       chartRef.current = new window.Chart(el, {
         type: 'bar',
-        data: {
-          labels,
-          datasets: [
-            { label: 'Daily Spend ($)', data: spends, backgroundColor: barColors, borderRadius: 4, order: 2 },
-            { label: 'Ideal Daily ($)', data: idealLine, type: 'line', borderColor: 'rgba(147,197,253,0.8)', borderWidth: 2, borderDash: [5, 4], pointRadius: 0, fill: false, order: 1 },
-          ],
-        },
+        data: { labels: allLabels, datasets },
         options: {
           responsive: true, maintainAspectRatio: false,
           interaction: { mode: 'index', intersect: false },
           plugins: {
             legend: { labels: { color: '#94a3b8', font: { size: 11 } } },
-            tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: $${ctx.parsed.y.toFixed(2)}` } },
+            tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: $${(ctx.parsed.y || 0).toFixed(2)}` } },
           },
           scales: {
-            x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(51,65,85,0.5)' }, title: { display: true, text: 'Date', color: '#64748b', font: { size: 11 } } },
+            x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(51,65,85,0.5)' } },
             y: { ticks: { color: '#64748b', font: { size: 10 }, callback: v => `$${v}` }, grid: { color: 'rgba(51,65,85,0.5)' }, beginAtZero: true },
           },
         },
@@ -352,9 +411,258 @@ function DailyChart({ dailyData, idealDailySpend }) {
       document.head.appendChild(script);
     }
     return () => { if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; } };
-  }, [dailyData, idealDailySpend]);
+  }, [dailyData, idealDailySpend, forecastData, budgetUSD]);
 
-  return <div style={{ height: 280, position: 'relative' }}><canvas ref={canvasRef} /></div>;
+  return <div style={{ height: 300, position: 'relative' }}><canvas ref={canvasRef} /></div>;
+}
+
+// ── Forecast calculator (linear with day-of-week weighting) ──────────────────
+function buildForecast(dailyData, budget, budgetMonth, budgetYear) {
+  if (!dailyData || dailyData.length === 0 || !budget) return [];
+  const today = new Date();
+  const daysInMonth = new Date(budgetYear, budgetMonth, 0).getDate();
+
+  // Average daily spend from available data (exclude today as it's partial)
+  const completeDays = dailyData.filter(d => {
+    const dDate = new Date(d.date + 'T00:00:00');
+    return dDate < today;
+  });
+  if (completeDays.length === 0) return [];
+
+  // Day-of-week weights from actual data
+  const dowTotals = { 0:[], 1:[], 2:[], 3:[], 4:[], 5:[], 6:[] };
+  completeDays.forEach(d => {
+    const dow = new Date(d.date + 'T00:00:00').getDay();
+    dowTotals[dow].push(d.spend);
+  });
+  const avgSpend = completeDays.reduce((s, d) => s + d.spend, 0) / completeDays.length;
+  const dowWeights = {};
+  for (let i = 0; i < 7; i++) {
+    const arr = dowTotals[i];
+    dowWeights[i] = arr.length > 0 ? (arr.reduce((s, v) => s + v, 0) / arr.length) / (avgSpend || 1) : 1;
+  }
+
+  // Build forecast for remaining days this month
+  const forecast = [];
+  const todayDate = today.getDate();
+  for (let day = todayDate + 1; day <= daysInMonth; day++) {
+    const d = new Date(budgetYear, budgetMonth - 1, day);
+    const dow = d.getDay();
+    const weight = dowWeights[dow] || 1;
+    const forecastSpend = parseFloat((avgSpend * weight).toFixed(2));
+    const dateStr = `${budgetYear}-${String(budgetMonth).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    forecast.push({ date: dateStr, forecastSpend });
+  }
+  return forecast;
+}
+
+// ── MetricsBar — Impressions / Clicks / CTR / CPM / CPC ──────────────────────
+function MetricsBar({ totalSpend, totalImpressions, totalClicks, prevData, showComparison }) {
+  const ctr = calcCTR(totalClicks, totalImpressions);
+  const cpm = calcCPM(totalSpend, totalImpressions);
+  const cpc = calcCPC(totalSpend, totalClicks);
+
+  const prevCTR = prevData ? calcCTR(prevData.totalClicks, prevData.totalImpressions) : null;
+  const prevCPM = prevData ? calcCPM(prevData.totalSpend, prevData.totalImpressions) : null;
+  const prevCPC = prevData ? calcCPC(prevData.totalSpend, prevData.totalClicks) : null;
+
+  function Delta({ current, prev, higherIsBetter = true, suffix = '' }) {
+    if (!showComparison || prev == null || prev === 0) return null;
+    const diff = current - prev;
+    const pct  = (diff / prev) * 100;
+    const good = higherIsBetter ? diff >= 0 : diff <= 0;
+    return (
+      <div className={`text-xs font-medium flex items-center gap-0.5 mt-0.5 ${good ? 'text-emerald-400' : 'text-red-400'}`}>
+        {diff >= 0 ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+        {Math.abs(pct).toFixed(1)}%{suffix}
+      </div>
+    );
+  }
+
+  const metrics = [
+    { label: 'Impressions', value: totalImpressions.toLocaleString(), prev: prevData?.totalImpressions, higherIsBetter: true, raw: totalImpressions, prevRaw: prevData?.totalImpressions },
+    { label: 'Clicks',      value: totalClicks.toLocaleString(),      prev: prevData?.totalClicks,      higherIsBetter: true, raw: totalClicks, prevRaw: prevData?.totalClicks },
+    { label: 'CTR',         value: `${ctr.toFixed(2)}%`,              prev: prevCTR,                   higherIsBetter: true, raw: ctr, prevRaw: prevCTR },
+    { label: 'CPM',         value: `$${cpm.toFixed(2)}`,              prev: prevCPM,                   higherIsBetter: false, raw: cpm, prevRaw: prevCPM },
+    { label: 'CPC',         value: `$${cpc.toFixed(2)}`,              prev: prevCPC,                   higherIsBetter: false, raw: cpc, prevRaw: prevCPC },
+  ];
+
+  return (
+    <div className="grid grid-cols-5 gap-3">
+      {metrics.map(m => (
+        <div key={m.label} className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+          <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">{m.label}</div>
+          <div className="text-xl font-bold text-white">{m.value}</div>
+          {showComparison && m.prevRaw != null && m.prevRaw !== 0 && (() => {
+            const diff = m.raw - m.prevRaw;
+            const pct = (diff / m.prevRaw) * 100;
+            const good = m.higherIsBetter ? diff >= 0 : diff <= 0;
+            return (
+              <div className={`text-xs font-medium flex items-center gap-0.5 mt-0.5 ${good ? 'text-emerald-400' : 'text-red-400'}`}>
+                {diff >= 0 ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                {Math.abs(pct).toFixed(1)}% vs prev
+              </div>
+            );
+          })()}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── AccountDrillDown — single account detail view ─────────────────────────────
+function AccountDrillDown({ account, totals, onBack, idealDailySpend, budgetUSD, budgetMonth, budgetYear }) {
+  const spend       = totals?.totalSpend || 0;
+  const impressions = totals?.totalImpressions || 0;
+  const clicks      = totals?.totalClicks || 0;
+  const leads       = totals?.totalLeads || 0;
+  const dailyData   = totals?.dailyData || [];
+
+  const ctr = calcCTR(clicks, impressions);
+  const cpm = calcCPM(spend, impressions);
+  const cpc = calcCPC(spend, clicks);
+
+  const forecastData = buildForecast(dailyData, budgetUSD, budgetMonth, budgetYear);
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center gap-3">
+        <button onClick={onBack}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs font-medium transition-colors">
+          ← All Clients
+        </button>
+        <div>
+          <h2 className="text-lg font-bold text-white">{account.name}</h2>
+          <div className="text-xs text-slate-500 font-mono">ID: {account.id}</div>
+        </div>
+      </div>
+
+      {/* Metrics row */}
+      <div className="grid grid-cols-5 gap-3">
+        {[
+          { label: 'Spend', value: fmtD(spend) },
+          { label: 'Impressions', value: impressions.toLocaleString() },
+          { label: 'Clicks', value: clicks.toLocaleString() },
+          { label: 'CTR', value: `${ctr.toFixed(2)}%` },
+          { label: 'CPM', value: `$${cpm.toFixed(2)}` },
+        ].map(m => (
+          <div key={m.label} className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">{m.label}</div>
+            <div className="text-xl font-bold text-white">{m.value}</div>
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        {[
+          { label: 'CPC', value: `$${cpc.toFixed(2)}` },
+          { label: 'Leads', value: leads.toLocaleString() },
+        ].map(m => (
+          <div key={m.label} className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">{m.label}</div>
+            <div className="text-xl font-bold text-white">{m.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Daily chart for this account */}
+      <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+        <h3 className="text-sm font-bold text-white uppercase tracking-wide mb-4">Daily Spend + Forecast</h3>
+        {dailyData.length > 0 ? (
+          <DailyChart
+            dailyData={dailyData}
+            idealDailySpend={idealDailySpend}
+            forecastData={forecastData}
+            budgetUSD={budgetUSD}
+          />
+        ) : (
+          <div className="h-64 flex items-center justify-center text-slate-500 text-sm">No daily data</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── ComparisonTable — side-by-side account comparison ────────────────────────
+function ComparisonTable({ accounts, accountTotals, selectedIds }) {
+  const selected = accounts
+    .filter(a => selectedIds.includes(a.id))
+    .map(a => {
+      const t = accountTotals?.find(x => x.accountId === a.id) || {};
+      const spend = t.totalSpend || 0;
+      const imp   = t.totalImpressions || 0;
+      const clk   = t.totalClicks || 0;
+      return {
+        ...a,
+        spend, imp, clk,
+        leads: t.totalLeads || 0,
+        ctr: calcCTR(clk, imp),
+        cpm: calcCPM(spend, imp),
+        cpc: calcCPC(spend, clk),
+      };
+    })
+    .sort((a, b) => b.spend - a.spend);
+
+  if (selected.length === 0) {
+    return <p className="text-slate-500 text-sm text-center py-8">Select accounts to compare</p>;
+  }
+
+  const cols = ['Spend', 'Impressions', 'Clicks', 'CTR', 'CPM', 'CPC', 'Leads'];
+  const getVal = (a, col) => {
+    switch(col) {
+      case 'Spend':       return { display: fmtD(a.spend), raw: a.spend };
+      case 'Impressions': return { display: a.imp.toLocaleString(), raw: a.imp };
+      case 'Clicks':      return { display: a.clk.toLocaleString(), raw: a.clk };
+      case 'CTR':         return { display: `${a.ctr.toFixed(2)}%`, raw: a.ctr };
+      case 'CPM':         return { display: `$${a.cpm.toFixed(2)}`, raw: a.cpm };
+      case 'CPC':         return { display: `$${a.cpc.toFixed(2)}`, raw: a.cpc };
+      case 'Leads':       return { display: a.leads.toLocaleString(), raw: a.leads };
+      default:            return { display: '-', raw: 0 };
+    }
+  };
+
+  // For each column, who's the best?
+  const lowerIsBetter = new Set(['CPM', 'CPC']);
+  const bestIdx = {};
+  cols.forEach(col => {
+    const vals = selected.map((a, i) => ({ i, raw: getVal(a, col).raw }));
+    vals.sort((a, b) => lowerIsBetter.has(col) ? a.raw - b.raw : b.raw - a.raw);
+    bestIdx[col] = vals[0]?.raw > 0 ? vals[0].i : -1;
+  });
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-slate-700">
+            <th className="pb-3 text-left text-xs text-slate-400 font-semibold uppercase tracking-wide w-40">Metric</th>
+            {selected.map(a => (
+              <th key={a.id} className="pb-3 text-right text-xs text-white font-semibold px-3">
+                <div className="truncate max-w-32">{a.name}</div>
+                <div className="text-slate-500 font-mono font-normal">{a.id}</div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {cols.map(col => (
+            <tr key={col} className="border-b border-slate-700/50">
+              <td className="py-3 text-xs text-slate-400 font-semibold uppercase tracking-wide">{col}</td>
+              {selected.map((a, i) => {
+                const { display, raw } = getVal(a, col);
+                const isBest = bestIdx[col] === i && raw > 0;
+                return (
+                  <td key={a.id} className={`py-3 text-right font-mono text-xs px-3 ${isBest ? 'text-emerald-400 font-bold' : 'text-white'}`}>
+                    {display}
+                    {isBest && <span className="ml-1 text-emerald-500">▲</span>}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 // ── Export helpers ────────────────────────────────────────────────────────────
@@ -500,6 +808,18 @@ export default function PacingDashboard() {
   const [showAIModal, setShowAIModal] = useState(false);
   const [aiReport, setAiReport] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+
+  // Drill-down: single account detail view
+  const [drillAccount, setDrillAccount] = useState(null); // account object | null
+
+  // Comparison mode: multi-account side-by-side
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareSelected, setCompareSelected] = useState([]);
+
+  // Period comparison: compare current range against a previous period
+  const [showPeriodCompare, setShowPeriodCompare] = useState(false);
+  const [prevPacingData, setPrevPacingData] = useState(null);
+  const [loadingPrev, setLoadingPrev] = useState(false);
 
   const now = new Date();
 
@@ -686,7 +1006,24 @@ export default function PacingDashboard() {
     else setPacingData(null);
   }, [selectedAccounts, selectedCampaigns, selectedGroups, startDate, endDate]);
 
-  function handleBudgetSave(newBudget) {
+  async function loadPrevPeriod() {
+    if (selectedAccounts.length === 0) return;
+    setLoadingPrev(true);
+    try {
+      // Calculate same-length period immediately before startDate
+      const start = new Date(startDate + 'T00:00:00');
+      const end   = new Date(endDate   + 'T00:00:00');
+      const spanDays = Math.round((end - start) / (1000*60*60*24));
+      const prevEnd   = new Date(start); prevEnd.setDate(prevEnd.getDate() - 1);
+      const prevStart = new Date(prevEnd); prevStart.setDate(prevStart.getDate() - spanDays);
+      const body = platform === 'meta'
+        ? { accountIds: selectedAccounts, startDate: prevStart.toISOString().split('T')[0], endDate: prevEnd.toISOString().split('T')[0] }
+        : { accountIds: selectedAccounts, campaignGroupIds: selectedGroups.length < campaignGroups.length ? selectedGroups : null, campaignIds: selectedCampaigns.length < campaigns.length ? selectedCampaigns : null, startDate: prevStart.toISOString().split('T')[0], endDate: prevEnd.toISOString().split('T')[0] };
+      const res = await fetch(`${apiPrefix}/pacing`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (res.ok) setPrevPacingData(await res.json());
+    } catch (err) { console.error(err); }
+    setLoadingPrev(false);
+  }
     setBudget(newBudget);
     saveBudget(budgetYear, budgetMonth, newBudget);
   }
@@ -708,6 +1045,14 @@ export default function PacingDashboard() {
   const yesterdaySpend = pacingData?.summary?.yesterdaySpend || 0;
   const totalDays = pacingData?.summary?.totalDays || 1;
   const daysElapsed = pacingData?.summary?.daysElapsed || 1;
+
+  const totalImpressions = pacingData?.summary?.totalImpressions || 0;
+  const totalClicks      = pacingData?.summary?.totalClicks      || 0;
+  const totalLeads       = pacingData?.summary?.totalLeads       || 0;
+
+  const prevTotalSpend       = prevPacingData?.summary?.totalSpend       || 0;
+  const prevTotalImpressions = prevPacingData?.summary?.totalImpressions || 0;
+  const prevTotalClicks      = prevPacingData?.summary?.totalClicks      || 0;
 
   const budgetUSD = parseFloat(budget.totalUSD) || 0;
   const budgetZAR = parseFloat(budget.totalZAR) || 0;
@@ -755,17 +1100,30 @@ export default function PacingDashboard() {
   const activeAccountCount = selectedAccounts.length;
   const perAccountBudget = budgetUSD > 0 && activeAccountCount > 0 ? budgetUSD / activeAccountCount : 0;
 
+  const forecastData = isCurrentMonth
+    ? buildForecast(pacingData?.dailyData || [], budgetUSD, budgetMonth, budgetYear)
+    : [];
+
   // ── Change 3: Ranked clients (top contributor first) ──────────────────────
   const clientRows = accounts
     .filter(a => selectedAccounts.includes(a.id))
     .map(a => {
       const totals = pacingData?.accountTotals?.find(t => t.accountId === a.id);
+      const spend = totals?.totalSpend || 0;
+      const imp   = totals?.totalImpressions || 0;
+      const clk   = totals?.totalClicks || 0;
       return {
         ...a,
-        totalSpend: totals?.totalSpend || 0,
+        totalSpend: spend,
         todaySpend: totals?.todaySpend || 0,
         yesterdaySpend: totals?.yesterdaySpend || 0,
-        pct: perAccountBudget > 0 ? ((totals?.totalSpend || 0) / perAccountBudget) * 100 : 0,
+        totalImpressions: imp,
+        totalClicks: clk,
+        totalLeads: totals?.totalLeads || 0,
+        ctr: calcCTR(clk, imp),
+        cpm: calcCPM(spend, imp),
+        cpc: calcCPC(spend, clk),
+        pct: perAccountBudget > 0 ? (spend / perAccountBudget) * 100 : 0,
         improved: (totals?.todaySpend || 0) >= (totals?.yesterdaySpend || 0),
       };
     })
@@ -1335,117 +1693,245 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                 </div>
               </div>
 
-              {/* Daily Chart */}
-              <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wide">
-                    Daily Spend — {startDate} to {endDate}
-                  </h3>
-                  <div className="flex items-center gap-4 text-xs text-slate-400">
-                    <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-emerald-500"></div>On Track</div>
-                    <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-yellow-500"></div>Under</div>
-                    <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-red-400"></div>Over</div>
-                    <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-blue-300"></div>Ideal</div>
-                  </div>
-                </div>
-                {loading ? (
-                  <div className="flex items-center justify-center h-64">
-                    <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
-                  </div>
-                ) : pacingData?.dailyData?.length > 0 ? (
-                  <DailyChart dailyData={pacingData.dailyData} idealDailySpend={idealDailySpend} />
-                ) : (
-                  <div className="flex items-center justify-center h-64 text-slate-500 text-sm">
-                    No spend data for this period
-                  </div>
+              {/* Metrics Bar — Impressions / Clicks / CTR / CPM / CPC */}
+              {pacingData && (
+                <MetricsBar
+                  totalSpend={totalSpend}
+                  totalImpressions={totalImpressions}
+                  totalClicks={totalClicks}
+                  prevData={showPeriodCompare ? { totalSpend: prevTotalSpend, totalImpressions: prevTotalImpressions, totalClicks: prevTotalClicks } : null}
+                  showComparison={showPeriodCompare && !!prevPacingData}
+                />
+              )}
+
+              {/* Period Comparison Controls */}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    const next = !showPeriodCompare;
+                    setShowPeriodCompare(next);
+                    if (next && !prevPacingData) loadPrevPeriod();
+                  }}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    showPeriodCompare ? 'bg-blue-700 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                  }`}>
+                  <Calendar className="w-3.5 h-3.5" />
+                  {showPeriodCompare ? 'Hide Comparison' : 'Compare to Previous Period'}
+                </button>
+                {showPeriodCompare && loadingPrev && (
+                  <span className="text-xs text-slate-400 flex items-center gap-1">
+                    <RefreshCw className="w-3 h-3 animate-spin" /> Loading prev period…
+                  </span>
                 )}
+                {showPeriodCompare && prevPacingData && !loadingPrev && (
+                  <span className="text-xs text-slate-400">
+                    vs {prevPacingData.summary?.startDate} → {prevPacingData.summary?.endDate}
+                  </span>
+                )}
+
+                {/* Compare mode toggle */}
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    onClick={() => { setCompareMode(m => !m); setCompareSelected([]); setDrillAccount(null); }}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      compareMode ? 'bg-purple-700 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                    }`}>
+                    <Users className="w-3.5 h-3.5" />
+                    {compareMode ? 'Exit Compare Mode' : 'Compare Accounts'}
+                  </button>
+                  {compareMode && compareSelected.length > 0 && (
+                    <span className="text-xs text-purple-300">{compareSelected.length} selected</span>
+                  )}
+                </div>
               </div>
 
-              {/* Client Breakdown — Ranked */}
-              <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-                <div className="mb-4">
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wide flex items-center gap-2">
-                    <Users className="w-4 h-4" /> Client Breakdown
-                    <span className="text-slate-500 text-xs font-normal normal-case">{activeAccountCount} clients · ranked by spend</span>
-                  </h3>
-                </div>
+              {/* Drill-down or Comparison or Default view */}
+              {drillAccount ? (
+                <AccountDrillDown
+                  account={drillAccount}
+                  totals={pacingData?.accountTotals?.find(t => t.accountId === drillAccount.id)}
+                  onBack={() => setDrillAccount(null)}
+                  idealDailySpend={idealDailySpend}
+                  budgetUSD={budgetUSD}
+                  budgetMonth={budgetMonth}
+                  budgetYear={budgetYear}
+                />
+              ) : (
+                <>
+                  {/* Daily Chart */}
+                  <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wide">
+                        Daily Spend — {startDate} to {endDate}
+                        {forecastData.length > 0 && <span className="ml-2 text-xs text-purple-300 font-normal normal-case">+ forecast to month end</span>}
+                      </h3>
+                      <div className="flex items-center gap-4 text-xs text-slate-400">
+                        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-emerald-500"></div>On Track</div>
+                        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-yellow-500"></div>Under</div>
+                        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-red-400"></div>Over</div>
+                        <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-purple-300"></div>Forecast</div>
+                        <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-blue-300"></div>Ideal</div>
+                      </div>
+                    </div>
+                    {loading ? (
+                      <div className="flex items-center justify-center h-64">
+                        <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
+                      </div>
+                    ) : pacingData?.dailyData?.length > 0 ? (
+                      <DailyChart
+                        dailyData={pacingData.dailyData}
+                        idealDailySpend={idealDailySpend}
+                        forecastData={forecastData}
+                        budgetUSD={budgetUSD}
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-64 text-slate-500 text-sm">
+                        No spend data for this period
+                      </div>
+                    )}
+                  </div>
 
-                {clientRows.length === 0 ? (
-                  <p className="text-slate-500 text-sm text-center py-6">No client data available</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-700">
-                          {['#', 'Client', 'Today', 'Yesterday', 'Period Total', '% of Budget', 'Trend', 'Pacing Bar'].map(h => (
-                            <th key={h} className={`pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide ${
-                              h === '#' ? 'text-center w-8' :
-                              h === 'Client' || h === 'Pacing Bar' ? 'text-left' :
-                              h === 'Trend' ? 'text-center' : 'text-right'
-                            }`}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {clientRows.map((client, i) => (
-                          <tr key={client.id} className={`border-b border-slate-700/50 ${i % 2 !== 0 ? 'bg-slate-700/20' : ''}`}>
-                            <td className="py-3 text-center">
-                              <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold ${
-                                i === 0 ? 'bg-yellow-500 text-yellow-900' :
-                                i === 1 ? 'bg-slate-400 text-slate-900' :
-                                i === 2 ? 'bg-amber-700 text-amber-100' :
-                                'bg-slate-700 text-slate-400'
-                              }`}>{i + 1}</span>
-                            </td>
-                            <td className="py-3">
-                              <div className="font-semibold text-white text-xs">{client.name}</div>
-                              <div className="text-xs text-slate-500 font-mono">ID: {client.id}</div>
-                            </td>
-                            <td className="py-3 text-right font-mono text-white text-xs">{fmtD(client.todaySpend)}</td>
-                            <td className="py-3 text-right font-mono text-slate-300 text-xs">{fmtD(client.yesterdaySpend)}</td>
-                            <td className="py-3 text-right font-bold text-white text-xs">{fmtD(client.totalSpend)}</td>
-                            <td className="py-3 text-right text-xs">
-                              {budgetUSD > 0
-                                ? <span className={`font-bold ${client.pct > 100 ? 'text-red-400' : client.pct > 75 ? 'text-yellow-400' : 'text-emerald-400'}`}>{fmt(client.pct, 1)}%</span>
-                                : <span className="text-slate-500">-</span>}
-                            </td>
-                            <td className="py-3 text-center">
-                              {client.improved
-                                ? <div className="flex items-center justify-center gap-1 text-emerald-400 text-xs font-medium"><TrendingUp className="w-3.5 h-3.5" /> Up</div>
-                                : <div className="flex items-center justify-center gap-1 text-red-400 text-xs font-medium"><TrendingDown className="w-3.5 h-3.5" /> Down</div>}
-                            </td>
-                            <td className="py-3 w-32">
-                              {budgetUSD > 0 ? (
-                                <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
-                                  <div className={`h-full rounded-full ${client.pct > 100 ? 'bg-red-500' : client.pct > 75 ? 'bg-yellow-500' : 'bg-emerald-500'}`}
-                                    style={{ width: `${Math.min(client.pct, 100)}%` }} />
-                                </div>
-                              ) : <span className="text-xs text-slate-600">No budget set</span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      {clientRows.length > 1 && (
-                        <tfoot>
-                          <tr className="bg-slate-700/40">
-                            <td className="py-3"></td>
-                            <td className="py-3 font-bold text-white text-xs uppercase">Total</td>
-                            <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtD(clientRows.reduce((s, r) => s + r.todaySpend, 0))}</td>
-                            <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{fmtD(clientRows.reduce((s, r) => s + r.yesterdaySpend, 0))}</td>
-                            <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtD(totalSpend)}</td>
-                            <td className="py-3 text-right font-bold text-xs">
-                              {budgetUSD > 0
-                                ? <span className={`${budgetUsedPct > 100 ? 'text-red-400' : budgetUsedPct > 75 ? 'text-yellow-400' : 'text-emerald-400'}`}>{fmt(budgetUsedPct, 1)}%</span>
-                                : <span className="text-slate-500">-</span>}
-                            </td>
-                            <td colSpan={2}></td>
-                          </tr>
-                        </tfoot>
+                  {/* Client Breakdown — with compare mode + drill-down */}
+                  <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wide flex items-center gap-2">
+                        <Users className="w-4 h-4" />
+                        {compareMode ? 'Account Comparison' : 'Client Breakdown'}
+                        <span className="text-slate-500 text-xs font-normal normal-case">{activeAccountCount} clients · ranked by spend</span>
+                      </h3>
+                      {compareMode && compareSelected.length >= 2 && (
+                        <span className="text-xs text-purple-300 bg-purple-900/40 px-2 py-1 rounded-lg">
+                          ▲ = best in column
+                        </span>
                       )}
-                    </table>
+                    </div>
+
+                    {compareMode && compareSelected.length >= 2 ? (
+                      <ComparisonTable
+                        accounts={accounts.filter(a => selectedAccounts.includes(a.id))}
+                        accountTotals={pacingData?.accountTotals}
+                        selectedIds={compareSelected}
+                      />
+                    ) : (
+                      clientRows.length === 0 ? (
+                        <p className="text-slate-500 text-sm text-center py-6">No client data available</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-slate-700">
+                                {compareMode
+                                  ? ['☑', 'Client', 'Spend', 'Impressions', 'CTR', 'CPM', 'CPC'].map(h => (
+                                      <th key={h} className={`pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide ${h === '☑' ? 'text-center w-8' : h === 'Client' ? 'text-left' : 'text-right'}`}>{h}</th>
+                                    ))
+                                  : ['#', 'Client', 'Today', 'Yesterday', 'Total', 'Impressions', 'CTR', 'CPC', '% Budget', 'Trend'].map(h => (
+                                      <th key={h} className={`pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide ${
+                                        h === '#' ? 'text-center w-8' :
+                                        h === 'Client' ? 'text-left' :
+                                        h === 'Trend' ? 'text-center' : 'text-right'
+                                      }`}>{h}</th>
+                                    ))
+                                }
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {clientRows.map((client, i) => (
+                                <tr key={client.id}
+                                  className={`border-b border-slate-700/50 ${i % 2 !== 0 ? 'bg-slate-700/20' : ''} ${!compareMode ? 'hover:bg-slate-700/40 cursor-pointer' : ''}`}
+                                  onClick={!compareMode ? () => setDrillAccount(client) : undefined}>
+                                  {compareMode ? (
+                                    <>
+                                      <td className="py-3 text-center">
+                                        <input type="checkbox"
+                                          checked={compareSelected.includes(client.id)}
+                                          onChange={e => {
+                                            e.stopPropagation();
+                                            setCompareSelected(prev =>
+                                              prev.includes(client.id)
+                                                ? prev.filter(x => x !== client.id)
+                                                : prev.length < 5 ? [...prev, client.id] : prev
+                                            );
+                                          }}
+                                          className="w-4 h-4 accent-purple-500" />
+                                      </td>
+                                      <td className="py-3">
+                                        <div className="font-semibold text-white text-xs">{client.name}</div>
+                                        <div className="text-xs text-slate-500 font-mono">ID: {client.id}</div>
+                                      </td>
+                                      <td className="py-3 text-right font-mono text-white text-xs">{fmtD(client.totalSpend)}</td>
+                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">{client.totalImpressions.toLocaleString()}</td>
+                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">{client.ctr.toFixed(2)}%</td>
+                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">${client.cpm.toFixed(2)}</td>
+                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">${client.cpc.toFixed(2)}</td>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <td className="py-3 text-center">
+                                        <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold ${
+                                          i === 0 ? 'bg-yellow-500 text-yellow-900' :
+                                          i === 1 ? 'bg-slate-400 text-slate-900' :
+                                          i === 2 ? 'bg-amber-700 text-amber-100' :
+                                          'bg-slate-700 text-slate-400'
+                                        }`}>{i + 1}</span>
+                                      </td>
+                                      <td className="py-3">
+                                        <div className="font-semibold text-white text-xs hover:text-blue-300">{client.name}</div>
+                                        <div className="text-xs text-slate-500 font-mono">ID: {client.id}</div>
+                                      </td>
+                                      <td className="py-3 text-right font-mono text-white text-xs">{fmtD(client.todaySpend)}</td>
+                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">{fmtD(client.yesterdaySpend)}</td>
+                                      <td className="py-3 text-right font-bold text-white text-xs">{fmtD(client.totalSpend)}</td>
+                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">{client.totalImpressions.toLocaleString()}</td>
+                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">{client.ctr.toFixed(2)}%</td>
+                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">${client.cpc.toFixed(2)}</td>
+                                      <td className="py-3 text-right text-xs">
+                                        {budgetUSD > 0
+                                          ? <span className={`font-bold ${client.pct > 100 ? 'text-red-400' : client.pct > 75 ? 'text-yellow-400' : 'text-emerald-400'}`}>{fmt(client.pct, 1)}%</span>
+                                          : <span className="text-slate-500">-</span>}
+                                      </td>
+                                      <td className="py-3 text-center">
+                                        {client.improved
+                                          ? <div className="flex items-center justify-center gap-1 text-emerald-400 text-xs font-medium"><TrendingUp className="w-3.5 h-3.5" /> Up</div>
+                                          : <div className="flex items-center justify-center gap-1 text-red-400 text-xs font-medium"><TrendingDown className="w-3.5 h-3.5" /> Down</div>}
+                                      </td>
+                                    </>
+                                  )}
+                                </tr>
+                              ))}
+                            </tbody>
+                            {!compareMode && clientRows.length > 1 && (
+                              <tfoot>
+                                <tr className="bg-slate-700/40">
+                                  <td className="py-3"></td>
+                                  <td className="py-3 font-bold text-white text-xs uppercase">Total</td>
+                                  <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtD(clientRows.reduce((s, r) => s + r.todaySpend, 0))}</td>
+                                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{fmtD(clientRows.reduce((s, r) => s + r.yesterdaySpend, 0))}</td>
+                                  <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtD(totalSpend)}</td>
+                                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{totalImpressions.toLocaleString()}</td>
+                                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{calcCTR(totalClicks, totalImpressions).toFixed(2)}%</td>
+                                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">${calcCPC(totalSpend, totalClicks).toFixed(2)}</td>
+                                  <td className="py-3 text-right font-bold text-xs">
+                                    {budgetUSD > 0
+                                      ? <span className={`${budgetUsedPct > 100 ? 'text-red-400' : budgetUsedPct > 75 ? 'text-yellow-400' : 'text-emerald-400'}`}>{fmt(budgetUsedPct, 1)}%</span>
+                                      : <span className="text-slate-500">-</span>}
+                                  </td>
+                                  <td></td>
+                                </tr>
+                              </tfoot>
+                            )}
+                          </table>
+                          {!compareMode && (
+                            <p className="text-xs text-slate-600 mt-3">Click any row to drill into that account</p>
+                          )}
+                          {compareMode && compareSelected.length < 2 && (
+                            <p className="text-xs text-slate-500 mt-3 text-center">Select 2–5 accounts to compare side-by-side</p>
+                          )}
+                        </div>
+                      )
+                    )}
                   </div>
-                )}
-              </div>
+                </>
+              )}
             </>
           )}
         </div>

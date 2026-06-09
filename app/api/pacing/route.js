@@ -141,18 +141,27 @@ export async function POST(request) {
     const daysElapsed   = Math.max(1, Math.min(totalDays, Math.round((nowMidnight - startMidnight) / msPerDay) + 1));
 
     const accountTotals = accountResults.map(r => ({
-      accountId:      r.accountId,
-      totalSpend:     r.dailyData.reduce((s, d) => s + d.spend, 0),
-      todaySpend:     r.dailyData.find(d => d.date === todayStr)?.spend     || 0,
-      yesterdaySpend: r.dailyData.find(d => d.date === yesterdayStr)?.spend || 0,
-      error:          r.error || false,
+      accountId:        r.accountId,
+      totalSpend:       r.dailyData.reduce((s, d) => s + d.spend,       0),
+      totalImpressions: r.dailyData.reduce((s, d) => s + d.impressions, 0),
+      totalClicks:      r.dailyData.reduce((s, d) => s + d.clicks,      0),
+      totalLeads:       r.dailyData.reduce((s, d) => s + d.leads,       0),
+      todaySpend:       r.dailyData.find(d => d.date === todayStr)?.spend     || 0,
+      yesterdaySpend:   r.dailyData.find(d => d.date === yesterdayStr)?.spend || 0,
+      dailyData:        r.dailyData,   // per-account daily series for drill-down
+      error:            r.error || false,
     }));
+
+    const totalImpressions = mergedDailyData.reduce((s, d) => s + d.impressions, 0);
+    const totalClicks      = mergedDailyData.reduce((s, d) => s + d.clicks,      0);
+    const totalLeads       = mergedDailyData.reduce((s, d) => s + d.leads,       0);
 
     return NextResponse.json({
       dailyData: mergedDailyData,
       accountTotals,
       summary: {
         totalSpend, todaySpend, yesterdaySpend,
+        totalImpressions, totalClicks, totalLeads,
         totalDays, daysElapsed,
         startDate:   start.toISOString().split('T')[0],
         endDate:     clampedEnd.toISOString().split('T')[0],
