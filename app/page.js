@@ -752,17 +752,7 @@ export default function PacingDashboard() {
   const [clientSearch, setClientSearch] = useState('');
   const [exclusionSaving, setExclusionSaving] = useState(false);
 
-  // Campaign Groups
-  const [campaignGroups, setCampaignGroups] = useState([]);
-  const [selectedGroups, setSelectedGroups] = useState([]);
-  const [loadingGroups, setLoadingGroups] = useState(false);
-  const [groupSearch, setGroupSearch] = useState('');
-
-  // Campaigns
-  const [campaigns, setCampaigns] = useState([]);
-  const [selectedCampaigns, setSelectedCampaigns] = useState([]);
-  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
-  const [campaignSearch, setCampaignSearch] = useState('');
+  // (Campaign Groups and Campaigns removed — pacing runs at account level only)
 
   // Date range
   const [startDate, setStartDate] = useState(firstOfMonth());
@@ -845,10 +835,6 @@ export default function PacingDashboard() {
   useEffect(() => {
     if (!session) return;
     setSelectedAccounts([]);
-    setSelectedGroups([]);
-    setSelectedCampaigns([]);
-    setCampaignGroups([]);
-    setCampaigns([]);
     setPacingData(null);
     loadAccounts();
   }, [platform]);
@@ -869,7 +855,7 @@ export default function PacingDashboard() {
     if (!isToday || selectedAccounts.length === 0) return;
     const interval = setInterval(() => loadPacing(), 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [selectedAccounts, selectedCampaigns, selectedGroups, startDate, endDate]);
+  }, [selectedAccounts, startDate, endDate]);
 
   async function loadAccounts() {
     setLoadingAccounts(true);
@@ -892,13 +878,18 @@ export default function PacingDashboard() {
   async function loadExclusions() {
     try {
       const res = await fetch('/api/exclusions');
-      if (res.ok) {
-        const data = await res.json();
-        const excl = data.excludedAccountIds || [];
-        excludedRef.current = excl;
-        setExcludedAccounts(excl);
-      }
-      // 405 = route not found yet, just skip
+      const manualExcl = res.ok ? ((await res.json()).excludedAccountIds || []) : [];
+      let bodExcl = [];
+      try {
+        const bodRes = await fetch('/api/bod-ref');
+        if (bodRes.ok) {
+          const bodData = await bodRes.json();
+          bodExcl = (bodData.excludedIds || []).map(id => String(id));
+        }
+      } catch { /* bod-ref unavailable */ }
+      const merged = [...new Set([...bodExcl, ...manualExcl])];
+      excludedRef.current = merged;
+      setExcludedAccounts(merged);
     } catch (err) { /* exclusions unavailable, continue without */ }
   }
 
@@ -930,67 +921,11 @@ export default function PacingDashboard() {
     });
   }
 
-  async function loadCampaignGroups() {
-    setLoadingGroups(true);
-    try {
-      // On Meta, the "campaign groups" slot in the UI shows Meta campaigns
-      // (the level above ad sets — equivalent to LinkedIn campaign groups
-      // for daily-budget grouping). /api/meta/campaigns returns the same
-      // {id, name} shape so the FilterSection renders without changes.
-      const url = platform === 'meta' ? `${apiPrefix}/campaigns` : '/api/campaigngroups';
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountIds: selectedAccounts }),
-      });
-      if (res.ok) { const data = await res.json(); setCampaignGroups(data); setSelectedGroups(data.map(g => g.id)); }
-    } catch (err) { console.error(err); }
-    setLoadingGroups(false);
-  }
-
-  async function loadCampaigns() {
-    setLoadingCampaigns(true);
-    try {
-      // On Meta, the "campaigns" slot in the UI shows Meta ad sets (the
-      // optimisation level — equivalent to LinkedIn campaigns). The body
-      // field name also changes: /api/meta/adsets accepts `campaignIds`
-      // (Meta campaigns); /api/campaigns accepts `campaignGroupIds`.
-      const url  = platform === 'meta' ? `${apiPrefix}/adsets` : '/api/campaigns';
-      const body = platform === 'meta'
-        ? { accountIds: selectedAccounts, campaignIds:      selectedGroups.length > 0 ? selectedGroups : null }
-        : { accountIds: selectedAccounts, campaignGroupIds: selectedGroups.length > 0 ? selectedGroups : null };
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) { const data = await res.json(); setCampaigns(data); setSelectedCampaigns(data.map(c => c.id)); }
-    } catch (err) { console.error(err); }
-    setLoadingCampaigns(false);
-  }
-
   async function loadPacing() {
     if (selectedAccounts.length === 0) return;
     setLoading(true);
     try {
-      // On Meta the body shape differs slightly:
-      //   - "campaignGroupIds" (LinkedIn) → "campaignIds" (Meta campaigns)
-      //   - "campaignIds"      (LinkedIn) → "adsetIds"    (Meta ad sets)
-      // The response shape from /api/meta/pacing matches /api/pacing exactly
-      // so all of the downstream PacingDashboard rendering is unchanged.
-      const body = platform === 'meta'
-        ? {
-            accountIds:  selectedAccounts,
-            campaignIds: selectedGroups.length    < campaignGroups.length ? selectedGroups    : null,
-            adsetIds:    selectedCampaigns.length < campaigns.length      ? selectedCampaigns : null,
-            startDate, endDate,
-          }
-        : {
-            accountIds:       selectedAccounts,
-            campaignGroupIds: selectedGroups.length    < campaignGroups.length ? selectedGroups    : null,
-            campaignIds:      selectedCampaigns.length < campaigns.length      ? selectedCampaigns : null,
-            startDate, endDate,
-          };
+      const body = { accountIds: selectedAccounts, startDate, endDate };
       const res = await fetch(`${apiPrefix}/pacing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1004,21 +939,18 @@ export default function PacingDashboard() {
   useEffect(() => {
     if (selectedAccounts.length > 0) loadPacing();
     else setPacingData(null);
-  }, [selectedAccounts, selectedCampaigns, selectedGroups, startDate, endDate]);
+  }, [selectedAccounts, startDate, endDate]);
 
   async function loadPrevPeriod() {
     if (selectedAccounts.length === 0) return;
     setLoadingPrev(true);
     try {
-      // Calculate same-length period immediately before startDate
       const start = new Date(startDate + 'T00:00:00');
       const end   = new Date(endDate   + 'T00:00:00');
       const spanDays = Math.round((end - start) / (1000*60*60*24));
       const prevEnd   = new Date(start); prevEnd.setDate(prevEnd.getDate() - 1);
       const prevStart = new Date(prevEnd); prevStart.setDate(prevStart.getDate() - spanDays);
-      const body = platform === 'meta'
-        ? { accountIds: selectedAccounts, startDate: prevStart.toISOString().split('T')[0], endDate: prevEnd.toISOString().split('T')[0] }
-        : { accountIds: selectedAccounts, campaignGroupIds: selectedGroups.length < campaignGroups.length ? selectedGroups : null, campaignIds: selectedCampaigns.length < campaigns.length ? selectedCampaigns : null, startDate: prevStart.toISOString().split('T')[0], endDate: prevEnd.toISOString().split('T')[0] };
+      const body = { accountIds: selectedAccounts, startDate: prevStart.toISOString().split('T')[0], endDate: prevEnd.toISOString().split('T')[0] };
       const res = await fetch(`${apiPrefix}/pacing`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (res.ok) setPrevPacingData(await res.json());
     } catch (err) { console.error(err); }
@@ -1141,8 +1073,6 @@ export default function PacingDashboard() {
   const StatusIcon = pacingStatus.icon;
 
   const filterSummary = [];
-  if (selectedGroups.length < campaignGroups.length) filterSummary.push(`${selectedGroups.length}/${campaignGroups.length} groups`);
-  if (selectedCampaigns.length < campaigns.length) filterSummary.push(`${selectedCampaigns.length}/${campaigns.length} campaigns`);
   if (excludedAccounts.length > 0) filterSummary.push(`${excludedAccounts.length} excluded`);
 
   // ── AI Report generator ───────────────────────────────────────────────────
@@ -1374,16 +1304,9 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                     const [y, m] = e.target.value.split('-');
                     const firstDay = `${y}-${m}-01`;
                     setStartDate(firstDay);
-                    // End date: last day of selected month or today if current month
                     const now = new Date();
-                    const selYear = parseInt(y), selMonth = parseInt(m) - 1;
-                    const isCurrentMo = selYear === now.getFullYear() && selMonth === now.getMonth();
-                    if (isCurrentMo) {
-                      setEndDate(todayStr());
-                    } else {
-                      const lastDay = new Date(selYear, selMonth + 1, 0);
-                      setEndDate(toDateInput(lastDay));
-                    }
+                    const isCurrentMo = parseInt(y) === now.getFullYear() && parseInt(m) === now.getMonth() + 1;
+                    setEndDate(isCurrentMo ? todayStr() : toDateInput(new Date(parseInt(y), parseInt(m), 0)));
                   }}
                   className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
                 <div className="text-xs text-slate-600 mt-1">From: {startDate}</div>
@@ -1399,23 +1322,20 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
             </div>
             {/* Quick month selectors */}
             <div className="flex flex-wrap gap-1.5 mt-3">
-              {(() => {
+              {[0, 1, 2].map(offset => {
                 const now = new Date();
-                return [0, 1, 2].map(offset => {
-                  const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
-                  const y = d.getFullYear(), m = d.getMonth();
-                  const label = offset === 0 ? 'This Month' : d.toLocaleString('default', { month: 'short' }) + ' ' + y;
-                  const isCurrentMo = offset === 0;
-                  const lastDay = isCurrentMo ? todayStr() : toDateInput(new Date(y, m + 1, 0));
-                  return (
-                    <button key={label}
-                      onClick={() => { setStartDate(toDateInput(new Date(y, m, 1))); setEndDate(lastDay); }}
-                      className="px-2 py-1 bg-slate-700 hover:bg-blue-700 text-slate-300 hover:text-white rounded text-xs transition-colors">
-                      {label}
-                    </button>
-                  );
-                });
-              })()}
+                const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+                const y = d.getFullYear(), mo = d.getMonth();
+                const label = offset === 0 ? 'This Month' : d.toLocaleString('default', { month: 'short' }) + ' ' + y;
+                const lastDay = offset === 0 ? todayStr() : toDateInput(new Date(y, mo + 1, 0));
+                return (
+                  <button key={label}
+                    onClick={() => { setStartDate(toDateInput(new Date(y, mo, 1))); setEndDate(lastDay); }}
+                    className="px-2 py-1 bg-slate-700 hover:bg-blue-700 text-slate-300 hover:text-white rounded text-xs transition-colors">
+                    {label}
+                  </button>
+                );
+              })}
             </div>
             <div className="mt-2 text-center">
               <span className="text-xs bg-slate-700 text-slate-400 px-2 py-0.5 rounded-full">
@@ -1492,7 +1412,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
           {excludedAccounts.length > 0 && (
             <div className="bg-red-900/20 border border-red-800 rounded-lg px-3 py-2 text-xs text-red-400 flex items-center gap-2">
               <EyeOff className="w-3.5 h-3.5 flex-shrink-0" />
-              {excludedAccounts.length} account{excludedAccounts.length > 1 ? 's' : ''} excluded · saved for future sessions
+              {excludedAccounts.length} account{excludedAccounts.length > 1 ? 's' : ''} excluded (BOD list + manual)
             </div>
           )}
           <FilterSection
@@ -1514,48 +1434,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
             showExclude={true}
           />
 
-          {selectedAccounts.length > 0 && (
-            <>
-              <div className="flex items-center gap-2 px-1 pt-1">
-                <span className="w-5 h-5 rounded-full bg-purple-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">2</span>
-                <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Campaign Groups</span>
-              </div>
-              <FilterSection
-                title="Campaign Groups"
-                icon={Target}
-                items={campaignGroups}
-                selectedIds={selectedGroups}
-                onToggle={makeToggle(setSelectedGroups)}
-                loading={loadingGroups}
-                searchValue={groupSearch}
-                onSearchChange={setGroupSearch}
-                onSelectFiltered={makeSelectFiltered(setSelectedGroups)}
-                onDeselectFiltered={makeDeselectFiltered(setSelectedGroups)}
-                totalCount={campaignGroups.length}
-                accentColor="purple"
-                emptyMessage="No campaign groups found"
-              />
-              <div className="flex items-center gap-2 px-1 pt-1">
-                <span className="w-5 h-5 rounded-full bg-emerald-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">3</span>
-                <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Campaigns</span>
-              </div>
-              <FilterSection
-                title="Campaigns"
-                icon={Target}
-                items={campaigns}
-                selectedIds={selectedCampaigns}
-                onToggle={makeToggle(setSelectedCampaigns)}
-                loading={loadingCampaigns}
-                searchValue={campaignSearch}
-                onSearchChange={setCampaignSearch}
-                onSelectFiltered={makeSelectFiltered(setSelectedCampaigns)}
-                onDeselectFiltered={makeDeselectFiltered(setSelectedCampaigns)}
-                totalCount={campaigns.length}
-                accentColor="emerald"
-                emptyMessage="No campaigns found"
-              />
-            </>
-          )}
+
         </div>
 
         {/* Main Content */}
