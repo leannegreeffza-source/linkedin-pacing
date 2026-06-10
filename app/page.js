@@ -36,7 +36,7 @@ function saveBudget(year, month, data) {
 
 // ── Pacing status ─────────────────────────────────────────────────────────────
 function getPacingStatus(actual, ideal) {
-  if (!ideal || ideal === 0) return { label: 'No Budget Set', color: 'slate', icon: Minus };
+  if (!ideal || ideal === 0) return { label: 'No Target Set', color: 'slate', icon: Minus };
   const ratio = actual / ideal;
   if (ratio >= 0.9 && ratio <= 1.1) return { label: 'On Track', color: 'emerald', icon: CheckCircle };
   if (ratio < 0.9) return { label: 'Under Pacing', color: 'yellow', icon: AlertCircle };
@@ -165,7 +165,7 @@ function SignInScreen() {
         <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
           <Target className="w-8 h-8 text-white" />
         </div>
-        <h1 className="text-3xl font-bold mb-3 text-white">Budget Pacing Tracker</h1>
+        <h1 className="text-3xl font-bold mb-3 text-white">Pacing Tracker</h1>
         <p className="text-slate-400 mb-8">Track your LinkedIn ad spend pacing daily</p>
         <button onClick={() => signIn('linkedin')}
           className="w-full bg-blue-600 text-white py-4 rounded-xl font-semibold hover:bg-blue-700 transition-colors">
@@ -211,14 +211,14 @@ function BudgetModal({ show, onClose, budget, onSave, month, year }) {
       <div className="bg-slate-800 rounded-2xl w-full max-w-md border border-slate-700 shadow-2xl">
         <div className="flex items-center justify-between p-6 border-b border-slate-700">
           <div>
-            <h2 className="text-lg font-bold text-white">Edit Monthly Budget</h2>
+            <h2 className="text-lg font-bold text-white">Edit Monthly Target</h2>
             <p className="text-sm text-slate-400">{monthName} {year} — applies to all date ranges in this month</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-6 space-y-4">
           <div>
-            <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-2">Total Budget (USD $)</label>
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-2">Monthly Target (USD $)</label>
             <div className="relative">
               <span className="absolute left-3 top-2.5 text-slate-400 font-bold">$</span>
               <input type="number" step="0.01" placeholder="e.g. 10000" value={form.totalUSD}
@@ -227,7 +227,7 @@ function BudgetModal({ show, onClose, budget, onSave, month, year }) {
             </div>
           </div>
           <div>
-            <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-2">Total Budget (ZAR R) — optional</label>
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-2">Monthly Target (ZAR R) — optional</label>
             <div className="relative">
               <span className="absolute left-3 top-2.5 text-slate-400 font-bold">R</span>
               <input type="number" step="0.01" placeholder="e.g. 185000" value={form.totalZAR}
@@ -236,7 +236,7 @@ function BudgetModal({ show, onClose, budget, onSave, month, year }) {
             </div>
           </div>
           <div>
-            <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-2">Budget Notes</label>
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block mb-2">Target Notes</label>
             <textarea placeholder="e.g. Q1 LinkedIn budget" value={form.note}
               onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
               rows={2}
@@ -248,7 +248,7 @@ function BudgetModal({ show, onClose, budget, onSave, month, year }) {
             className="flex-1 px-4 py-2.5 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 font-medium text-sm">Cancel</button>
           <button onClick={() => { onSave(form); onClose(); }}
             className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm flex items-center justify-center gap-2">
-            <Save className="w-4 h-4" /> Save Budget
+            <Save className="w-4 h-4" /> Save Target
           </button>
         </div>
       </div>
@@ -374,7 +374,7 @@ function DailyChart({ dailyData, idealDailySpend, forecastData, budgetUSD }) {
 
       if (budgetUSD > 0) {
         datasets.push({
-          label: 'Budget ($)',
+          label: 'Target ($)',
           data: allLabels.map(() => parseFloat(budgetUSD.toFixed(2))),
           type: 'line',
           borderColor: 'rgba(248,113,113,0.6)',
@@ -669,13 +669,13 @@ function ComparisonTable({ accounts, accountTotals, selectedIds }) {
 function exportToExcel(clientRows, dailyData, startDate, endDate, totalSpend, budgetUSD) {
   // Build a simple CSV that Excel can open
   const lines = [];
-  lines.push(`LinkedIn Budget Pacing Report`);
+  lines.push(`LinkedIn Pacing Tracker Report`);
   lines.push(`Period,${startDate} to ${endDate}`);
   lines.push(`Total Spend,$${totalSpend.toFixed(2)}`);
   lines.push(`Budget,$${budgetUSD > 0 ? budgetUSD.toFixed(2) : 'Not set'}`);
   lines.push('');
   lines.push('CLIENT BREAKDOWN');
-  lines.push('Rank,Client,Account ID,Today Spend,Yesterday Spend,Month Total,% of Budget');
+  lines.push('Rank,Client,Account ID,Today Spend,Yesterday Spend,Month Total,% of Target');
   clientRows.forEach((c, i) => {
     lines.push(`${i + 1},"${c.name}",${c.id},$${c.todaySpend.toFixed(2)},$${c.yesterdaySpend.toFixed(2)},$${c.totalSpend.toFixed(2)},${budgetUSD > 0 ? c.pct.toFixed(1) + '%' : 'N/A'}`);
   });
@@ -724,17 +724,17 @@ function exportToPDF(clientRows, dailyData, startDate, endDate, totalSpend, budg
       .status { display:inline-block; padding:4px 12px; border-radius:20px; font-weight:600; font-size:12px; background:#dcfce7; color:#166534; }
       @media print { body { margin: 20px; } }
     </style></head><body>
-    <h1>LinkedIn Budget Pacing Report</h1>
+    <h1>LinkedIn Pacing Tracker Report</h1>
     <p style="color:#64748b">Period: <strong>${startDate}</strong> to <strong>${endDate}</strong></p>
     <div class="meta">
       <div><div class="label">Total Spend</div><div class="value">$${totalSpend.toFixed(2)}</div></div>
-      <div><div class="label">Budget</div><div class="value">${budgetUSD > 0 ? '$' + budgetUSD.toFixed(2) : 'Not set'}</div></div>
+      <div><div class="label">Target</div><div class="value">${budgetUSD > 0 ? '$' + budgetUSD.toFixed(2) : 'Not set'}</div></div>
       <div><div class="label">Pacing Status</div><div class="value">${pacingLabel}</div></div>
     </div>
     <h2>Client Breakdown — Ranked by Contribution</h2>
-    <table><thead><tr><th>#</th><th>Client</th><th>Today</th><th>Yesterday</th><th>Period Total</th><th>% of Budget</th></tr></thead>
+    <table><thead><tr><th>#</th><th>Client</th><th>Today</th><th>Yesterday</th><th>Period Total</th><th>% of Target</th></tr></thead>
     <tbody>${rows}</tbody></table>
-    <p style="margin-top:40px;font-size:11px;color:#94a3b8">Generated by LinkedIn Budget Pacing Tracker • ${new Date().toLocaleString()}</p>
+    <p style="margin-top:40px;font-size:11px;color:#94a3b8">Generated by LinkedIn Pacing Tracker • ${new Date().toLocaleString()}</p>
     <script>window.onload=()=>window.print();<\/script>
     </body></html>`);
   win.document.close();
@@ -752,7 +752,17 @@ export default function PacingDashboard() {
   const [clientSearch, setClientSearch] = useState('');
   const [exclusionSaving, setExclusionSaving] = useState(false);
 
-  // (Campaign Groups and Campaigns removed — pacing runs at account level only)
+  // Campaign Groups
+  const [campaignGroups, setCampaignGroups] = useState([]);
+  const [selectedGroups, setSelectedGroups] = useState([]);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  const [groupSearch, setGroupSearch] = useState('');
+
+  // Campaigns
+  const [campaigns, setCampaigns] = useState([]);
+  const [selectedCampaigns, setSelectedCampaigns] = useState([]);
+  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
+  const [campaignSearch, setCampaignSearch] = useState('');
 
   // Date range
   const [startDate, setStartDate] = useState(firstOfMonth());
@@ -828,13 +838,30 @@ export default function PacingDashboard() {
     if (session) { loadExclusions().then(() => loadAccounts()); }
   }, [session]);
 
-  // Reload accounts when platform toggles (LinkedIn ↔ Meta).
+  // Reload accounts when platform toggles (LinkedIn ↔ Meta). Also clears
+  // selections from the previous platform so we don't briefly try to filter
+  // Meta campaigns by LinkedIn IDs (or vice versa). The if(session) guard
+  // prevents this firing on the initial localStorage hydration before login.
   useEffect(() => {
     if (!session) return;
     setSelectedAccounts([]);
+    setSelectedGroups([]);
+    setSelectedCampaigns([]);
+    setCampaignGroups([]);
+    setCampaigns([]);
     setPacingData(null);
     loadAccounts();
   }, [platform]);
+
+  // Load campaign groups/campaigns when accounts change
+  useEffect(() => {
+    if (selectedAccounts.length > 0) { loadCampaignGroups(); loadCampaigns(); }
+    else { setCampaignGroups([]); setSelectedGroups([]); setCampaigns([]); setSelectedCampaigns([]); }
+  }, [selectedAccounts]);
+
+  useEffect(() => {
+    if (selectedAccounts.length > 0) loadCampaigns();
+  }, [selectedGroups]);
 
   // Auto-refresh (current period only)
   useEffect(() => {
@@ -842,7 +869,7 @@ export default function PacingDashboard() {
     if (!isToday || selectedAccounts.length === 0) return;
     const interval = setInterval(() => loadPacing(), 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [selectedAccounts, startDate, endDate]);
+  }, [selectedAccounts, selectedCampaigns, selectedGroups, startDate, endDate]);
 
   async function loadAccounts() {
     setLoadingAccounts(true);
@@ -864,24 +891,14 @@ export default function PacingDashboard() {
 
   async function loadExclusions() {
     try {
-      // Load manual exclusions saved by user
       const res = await fetch('/api/exclusions');
-      const manualExcl = res.ok ? ((await res.json()).excludedAccountIds || []) : [];
-
-      // Also load the BOD built-in exclusion list (accounts we never use)
-      let bodExcl = [];
-      try {
-        const bodRes = await fetch('/api/bod-ref');
-        if (bodRes.ok) {
-          const bodData = await bodRes.json();
-          bodExcl = (bodData.excludedIds || []).map(id => String(id));
-        }
-      } catch { /* bod-ref unavailable, skip */ }
-
-      // Merge: BOD exclusions + manual exclusions (deduped)
-      const merged = [...new Set([...bodExcl, ...manualExcl])];
-      excludedRef.current = merged;
-      setExcludedAccounts(merged);
+      if (res.ok) {
+        const data = await res.json();
+        const excl = data.excludedAccountIds || [];
+        excludedRef.current = excl;
+        setExcludedAccounts(excl);
+      }
+      // 405 = route not found yet, just skip
     } catch (err) { /* exclusions unavailable, continue without */ }
   }
 
@@ -913,11 +930,67 @@ export default function PacingDashboard() {
     });
   }
 
+  async function loadCampaignGroups() {
+    setLoadingGroups(true);
+    try {
+      // On Meta, the "campaign groups" slot in the UI shows Meta campaigns
+      // (the level above ad sets — equivalent to LinkedIn campaign groups
+      // for daily-budget grouping). /api/meta/campaigns returns the same
+      // {id, name} shape so the FilterSection renders without changes.
+      const url = platform === 'meta' ? `${apiPrefix}/campaigns` : '/api/campaigngroups';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountIds: selectedAccounts }),
+      });
+      if (res.ok) { const data = await res.json(); setCampaignGroups(data); setSelectedGroups(data.map(g => g.id)); }
+    } catch (err) { console.error(err); }
+    setLoadingGroups(false);
+  }
+
+  async function loadCampaigns() {
+    setLoadingCampaigns(true);
+    try {
+      // On Meta, the "campaigns" slot in the UI shows Meta ad sets (the
+      // optimisation level — equivalent to LinkedIn campaigns). The body
+      // field name also changes: /api/meta/adsets accepts `campaignIds`
+      // (Meta campaigns); /api/campaigns accepts `campaignGroupIds`.
+      const url  = platform === 'meta' ? `${apiPrefix}/adsets` : '/api/campaigns';
+      const body = platform === 'meta'
+        ? { accountIds: selectedAccounts, campaignIds:      selectedGroups.length > 0 ? selectedGroups : null }
+        : { accountIds: selectedAccounts, campaignGroupIds: selectedGroups.length > 0 ? selectedGroups : null };
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) { const data = await res.json(); setCampaigns(data); setSelectedCampaigns(data.map(c => c.id)); }
+    } catch (err) { console.error(err); }
+    setLoadingCampaigns(false);
+  }
+
   async function loadPacing() {
     if (selectedAccounts.length === 0) return;
     setLoading(true);
     try {
-      const body = { accountIds: selectedAccounts, startDate, endDate };
+      // On Meta the body shape differs slightly:
+      //   - "campaignGroupIds" (LinkedIn) → "campaignIds" (Meta campaigns)
+      //   - "campaignIds"      (LinkedIn) → "adsetIds"    (Meta ad sets)
+      // The response shape from /api/meta/pacing matches /api/pacing exactly
+      // so all of the downstream PacingDashboard rendering is unchanged.
+      const body = platform === 'meta'
+        ? {
+            accountIds:  selectedAccounts,
+            campaignIds: selectedGroups.length    < campaignGroups.length ? selectedGroups    : null,
+            adsetIds:    selectedCampaigns.length < campaigns.length      ? selectedCampaigns : null,
+            startDate, endDate,
+          }
+        : {
+            accountIds:       selectedAccounts,
+            campaignGroupIds: selectedGroups.length    < campaignGroups.length ? selectedGroups    : null,
+            campaignIds:      selectedCampaigns.length < campaigns.length      ? selectedCampaigns : null,
+            startDate, endDate,
+          };
       const res = await fetch(`${apiPrefix}/pacing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -931,18 +1004,21 @@ export default function PacingDashboard() {
   useEffect(() => {
     if (selectedAccounts.length > 0) loadPacing();
     else setPacingData(null);
-  }, [selectedAccounts, startDate, endDate]);
+  }, [selectedAccounts, selectedCampaigns, selectedGroups, startDate, endDate]);
 
   async function loadPrevPeriod() {
     if (selectedAccounts.length === 0) return;
     setLoadingPrev(true);
     try {
+      // Calculate same-length period immediately before startDate
       const start = new Date(startDate + 'T00:00:00');
       const end   = new Date(endDate   + 'T00:00:00');
       const spanDays = Math.round((end - start) / (1000*60*60*24));
       const prevEnd   = new Date(start); prevEnd.setDate(prevEnd.getDate() - 1);
       const prevStart = new Date(prevEnd); prevStart.setDate(prevStart.getDate() - spanDays);
-      const body = { accountIds: selectedAccounts, startDate: prevStart.toISOString().split('T')[0], endDate: prevEnd.toISOString().split('T')[0] };
+      const body = platform === 'meta'
+        ? { accountIds: selectedAccounts, startDate: prevStart.toISOString().split('T')[0], endDate: prevEnd.toISOString().split('T')[0] }
+        : { accountIds: selectedAccounts, campaignGroupIds: selectedGroups.length < campaignGroups.length ? selectedGroups : null, campaignIds: selectedCampaigns.length < campaigns.length ? selectedCampaigns : null, startDate: prevStart.toISOString().split('T')[0], endDate: prevEnd.toISOString().split('T')[0] };
       const res = await fetch(`${apiPrefix}/pacing`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (res.ok) setPrevPacingData(await res.json());
     } catch (err) { console.error(err); }
@@ -1065,6 +1141,8 @@ export default function PacingDashboard() {
   const StatusIcon = pacingStatus.icon;
 
   const filterSummary = [];
+  if (selectedGroups.length < campaignGroups.length) filterSummary.push(`${selectedGroups.length}/${campaignGroups.length} groups`);
+  if (selectedCampaigns.length < campaigns.length) filterSummary.push(`${selectedCampaigns.length}/${campaigns.length} campaigns`);
   if (excludedAccounts.length > 0) filterSummary.push(`${excludedAccounts.length} excluded`);
 
   // ── AI Report generator ───────────────────────────────────────────────────
@@ -1080,9 +1158,9 @@ export default function PacingDashboard() {
     const prompt = `You are an expert digital marketing analyst. Write a professional, concise pacing report for a LinkedIn advertising campaign based on the following data:
 
 REPORTING PERIOD: ${startDate} to ${endDate}
-TOTAL BUDGET: ${budgetUSD > 0 ? '$' + budgetUSD.toFixed(2) + ' USD' : 'Not set'}${budgetZAR > 0 ? ' / R' + budgetZAR.toFixed(2) + ' ZAR' : ''}
+TOTAL TARGET: ${budgetUSD > 0 ? '$' + budgetUSD.toFixed(2) + ' USD' : 'Not set'}${budgetZAR > 0 ? ' / R' + budgetZAR.toFixed(2) + ' ZAR' : ''}
 TOTAL SPEND TO DATE: $${totalSpend.toFixed(2)}
-BUDGET USED: ${budgetUSD > 0 ? budgetUsedPct.toFixed(1) + '%' : 'N/A'}
+TARGET USED: ${budgetUSD > 0 ? budgetUsedPct.toFixed(1) + '%' : 'N/A'}
 PACING STATUS: ${pacingStatus.label}
 PACING VS IDEAL: ${pacingPct > 0 ? pacingPct.toFixed(1) + '% of ideal pacing' : 'No budget set'}
 TODAY'S SPEND: $${todaySpend.toFixed(2)}
@@ -1140,7 +1218,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                 <Target className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-white">Budget Pacing Tracker</h1>
+                <h1 className="text-xl font-bold text-white">Pacing Tracker</h1>
                 <p className="text-xs text-slate-400">
                   {platform === 'meta' ? 'Meta (Facebook + Instagram)' : 'LinkedIn'} Ad Spend — Daily Pacing
                 </p>
@@ -1288,11 +1366,27 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
             </h3>
             <div className="space-y-2">
               <div>
-                <label className="text-xs text-slate-500 block mb-1">Start Date</label>
-                <input type="date" value={startDate}
-                  max={endDate}
-                  onChange={e => setStartDate(e.target.value)}
+                <label className="text-xs text-slate-500 block mb-1">Month (always starts 1st)</label>
+                <input type="month"
+                  value={startDate.slice(0, 7)}
+                  max={todayStr().slice(0, 7)}
+                  onChange={e => {
+                    const [y, m] = e.target.value.split('-');
+                    const firstDay = `${y}-${m}-01`;
+                    setStartDate(firstDay);
+                    // End date: last day of selected month or today if current month
+                    const now = new Date();
+                    const selYear = parseInt(y), selMonth = parseInt(m) - 1;
+                    const isCurrentMo = selYear === now.getFullYear() && selMonth === now.getMonth();
+                    if (isCurrentMo) {
+                      setEndDate(todayStr());
+                    } else {
+                      const lastDay = new Date(selYear, selMonth + 1, 0);
+                      setEndDate(toDateInput(lastDay));
+                    }
+                  }}
                   className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
+                <div className="text-xs text-slate-600 mt-1">From: {startDate}</div>
               </div>
               <div>
                 <label className="text-xs text-slate-500 block mb-1">End Date</label>
@@ -1303,19 +1397,25 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                   className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
               </div>
             </div>
-            {/* Quick selectors */}
+            {/* Quick month selectors */}
             <div className="flex flex-wrap gap-1.5 mt-3">
-              {[
-                { label: 'Today', fn: () => { setStartDate(todayStr()); setEndDate(todayStr()); } },
-                { label: 'This Month', fn: () => { setStartDate(firstOfMonth()); setEndDate(todayStr()); } },
-                { label: 'Last 7d', fn: () => { const d = new Date(); d.setDate(d.getDate() - 6); setStartDate(toDateInput(d)); setEndDate(todayStr()); } },
-                { label: 'Last 30d', fn: () => { const d = new Date(); d.setDate(d.getDate() - 29); setStartDate(toDateInput(d)); setEndDate(todayStr()); } },
-              ].map(q => (
-                <button key={q.label} onClick={q.fn}
-                  className="px-2 py-1 bg-slate-700 hover:bg-blue-700 text-slate-300 hover:text-white rounded text-xs transition-colors">
-                  {q.label}
-                </button>
-              ))}
+              {(() => {
+                const now = new Date();
+                return [0, 1, 2].map(offset => {
+                  const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+                  const y = d.getFullYear(), m = d.getMonth();
+                  const label = offset === 0 ? 'This Month' : d.toLocaleString('default', { month: 'short' }) + ' ' + y;
+                  const isCurrentMo = offset === 0;
+                  const lastDay = isCurrentMo ? todayStr() : toDateInput(new Date(y, m + 1, 0));
+                  return (
+                    <button key={label}
+                      onClick={() => { setStartDate(toDateInput(new Date(y, m, 1))); setEndDate(lastDay); }}
+                      className="px-2 py-1 bg-slate-700 hover:bg-blue-700 text-slate-300 hover:text-white rounded text-xs transition-colors">
+                      {label}
+                    </button>
+                  );
+                });
+              })()}
             </div>
             <div className="mt-2 text-center">
               <span className="text-xs bg-slate-700 text-slate-400 px-2 py-0.5 rounded-full">
@@ -1328,7 +1428,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
           <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-2">
-                <DollarSign className="w-3.5 h-3.5" /> Budget
+                <DollarSign className="w-3.5 h-3.5" /> Target
               </h3>
               <button onClick={() => setShowBudgetModal(true)}
                 className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300">
@@ -1339,12 +1439,12 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
               <div className="space-y-2">
                 <div>
                   <div className="text-2xl font-bold text-white">{fmtD(budgetUSD)}</div>
-                  <div className="text-xs text-slate-400">USD Total Budget</div>
+                  <div className="text-xs text-slate-400">USD Total Target</div>
                 </div>
                 {budgetZAR > 0 && (
                   <div>
                     <div className="text-lg font-bold text-yellow-400">{fmtR(budgetZAR)}</div>
-                    <div className="text-xs text-slate-400">ZAR Total Budget</div>
+                    <div className="text-xs text-slate-400">ZAR Total Target</div>
                   </div>
                 )}
                 <div className="pt-2 border-t border-slate-700 space-y-1">
@@ -1378,7 +1478,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
             ) : (
               <button onClick={() => setShowBudgetModal(true)}
                 className="w-full py-3 border-2 border-dashed border-slate-600 rounded-lg text-slate-400 text-sm hover:border-blue-500 hover:text-blue-400 transition-colors">
-                + Set Budget
+                + Set Target
               </button>
             )}
           </div>
@@ -1392,7 +1492,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
           {excludedAccounts.length > 0 && (
             <div className="bg-red-900/20 border border-red-800 rounded-lg px-3 py-2 text-xs text-red-400 flex items-center gap-2">
               <EyeOff className="w-3.5 h-3.5 flex-shrink-0" />
-              {excludedAccounts.length} account{excludedAccounts.length > 1 ? 's' : ''} excluded (BOD list + manual)
+              {excludedAccounts.length} account{excludedAccounts.length > 1 ? 's' : ''} excluded · saved for future sessions
             </div>
           )}
           <FilterSection
@@ -1414,6 +1514,48 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
             showExclude={true}
           />
 
+          {selectedAccounts.length > 0 && (
+            <>
+              <div className="flex items-center gap-2 px-1 pt-1">
+                <span className="w-5 h-5 rounded-full bg-purple-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">2</span>
+                <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Campaign Groups</span>
+              </div>
+              <FilterSection
+                title="Campaign Groups"
+                icon={Target}
+                items={campaignGroups}
+                selectedIds={selectedGroups}
+                onToggle={makeToggle(setSelectedGroups)}
+                loading={loadingGroups}
+                searchValue={groupSearch}
+                onSearchChange={setGroupSearch}
+                onSelectFiltered={makeSelectFiltered(setSelectedGroups)}
+                onDeselectFiltered={makeDeselectFiltered(setSelectedGroups)}
+                totalCount={campaignGroups.length}
+                accentColor="purple"
+                emptyMessage="No campaign groups found"
+              />
+              <div className="flex items-center gap-2 px-1 pt-1">
+                <span className="w-5 h-5 rounded-full bg-emerald-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">3</span>
+                <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Campaigns</span>
+              </div>
+              <FilterSection
+                title="Campaigns"
+                icon={Target}
+                items={campaigns}
+                selectedIds={selectedCampaigns}
+                onToggle={makeToggle(setSelectedCampaigns)}
+                loading={loadingCampaigns}
+                searchValue={campaignSearch}
+                onSearchChange={setCampaignSearch}
+                onSelectFiltered={makeSelectFiltered(setSelectedCampaigns)}
+                onDeselectFiltered={makeDeselectFiltered(setSelectedCampaigns)}
+                totalCount={campaigns.length}
+                accentColor="emerald"
+                emptyMessage="No campaigns found"
+              />
+            </>
+          )}
         </div>
 
         {/* Main Content */}
@@ -1429,11 +1571,11 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
               {/* Summary Cards */}
               <div className="grid grid-cols-4 gap-4">
                 <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
-                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Budget</div>
+                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Target</div>
                   <div className="text-2xl font-bold text-white mb-1">{budgetUSD > 0 ? fmtD(budgetUSD) : '-'}</div>
                   <button onClick={() => setShowBudgetModal(true)}
                     className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
-                    <Edit3 className="w-3 h-3" /> {budgetUSD > 0 ? 'Edit budget' : 'Set budget'}
+                    <Edit3 className="w-3 h-3" /> {budgetUSD > 0 ? 'Edit target' : 'Set target'}
                   </button>
                 </div>
                 <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
@@ -1706,7 +1848,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                                   ? ['☑', 'Client', 'Spend', 'Impressions', 'CTR', 'CPM', 'CPC'].map(h => (
                                       <th key={h} className={`pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide ${h === '☑' ? 'text-center w-8' : h === 'Client' ? 'text-left' : 'text-right'}`}>{h}</th>
                                     ))
-                                  : ['#', 'Client', 'Today', 'Yesterday', 'Total', 'Impressions', 'CTR', 'CPC', '% Budget', 'Trend'].map(h => (
+                                  : ['#', 'Client', 'Today', 'Yesterday', 'Total', 'Impressions', 'CTR', 'CPC', '% Target', 'Trend'].map(h => (
                                       <th key={h} className={`pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide ${
                                         h === '#' ? 'text-center w-8' :
                                         h === 'Client' ? 'text-left' :
