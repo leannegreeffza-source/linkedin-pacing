@@ -486,12 +486,14 @@ function DailyChart({ dailyData, idealDailySpend, forecastData, budgetUSD, avgLa
       // Pad forecast to full length — null for actual days
       const paddedForecast = [...new Array(actualLen).fill(null), ...forecastSpends];
 
+      // Use idealDailySpend if set, otherwise fall back to last month avg for colouring
+      const benchmarkDaily = idealDailySpend > 0 ? idealDailySpend : (avgLastMonthDaily > 0 ? avgLastMonthDaily : 0);
       const barColors = dailyData.map(d => {
-        if (!idealDailySpend) return 'rgba(99,102,241,0.8)';
-        const ratio = d.spend / idealDailySpend;
-        if (ratio >= 0.9 && ratio <= 1.1) return 'rgba(52,211,153,0.85)';
-        if (ratio < 0.9) return 'rgba(251,191,36,0.85)';
-        return 'rgba(248,113,113,0.85)';
+        if (!benchmarkDaily) return 'rgba(52,211,153,0.85)'; // no benchmark — show green (over is good)
+        const ratio = d.spend / benchmarkDaily;
+        if (ratio >= 0.9 && ratio <= 1.1) return 'rgba(52,211,153,0.85)'; // green — on track
+        if (ratio < 0.9) return 'rgba(251,191,36,0.85)';                   // yellow — under
+        return 'rgba(52,211,153,0.85)';                                     // green — over is good
       });
 
       const idealLine = allLabels.map(() => parseFloat((idealDailySpend || 0).toFixed(2)));
@@ -1813,8 +1815,10 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                       {(() => {
                         const now = new Date();
                         const y = now.getFullYear(), m = now.getMonth();
-                        const firstDay = `${y}-${String(m).padStart(2,'0')}-01`;
-                        const lastDay  = new Date(y, m, 0).toISOString().split('T')[0];
+                        const prevMonth = m === 0 ? 12 : m;
+                        const prevYear  = m === 0 ? y - 1 : y;
+                        const firstDay  = `${prevYear}-${String(prevMonth).padStart(2,'0')}-01`;
+                        const lastDay   = new Date(prevYear, prevMonth, 0).toISOString().split('T')[0];
                         return lastMonthData ? `${firstDay} → ${lastDay}` : 'Prior month';
                       })()}
                     </div>
@@ -2024,7 +2028,51 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                     )}
                   </div>
 
-                  {/* Daily Spend Block */}
+                  {/* Client Breakdown — with compare mode + drill-down */}
+                  <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wide flex items-center gap-2">
+                        <Users className="w-4 h-4" />
+                        {compareMode ? 'Account Comparison' : 'Client Breakdown'}
+                        <span className="text-slate-500 text-xs font-normal normal-case">{activeAccountCount} clients · ranked by spend</span>
+                      </h3>
+                      {compareMode && compareSelected.length >= 2 && (
+                        <span className="text-xs text-purple-300 bg-purple-900/40 px-2 py-1 rounded-lg">
+                          ▲ = best in column
+                        </span>
+                      )}
+                    </div>
+
+                    {compareMode && compareSelected.length >= 2 ? (
+                      <ComparisonTable
+                        accounts={accounts.filter(a => selectedAccounts.includes(a.id) && !excludedAccounts.includes(a.id))}
+                        accountTotals={pacingData?.accountTotals}
+                        selectedIds={compareSelected}
+                      />
+                    ) : (
+                      clientRows.length === 0 ? (
+                        <p className="text-slate-500 text-sm text-center py-6">No client data available</p>
+                      ) : (
+                        <div className="space-y-8">
+                          <div>
+                            <div className="flex items-center gap-2 mb-3">
+                              <span className="text-xs font-bold text-yellow-400 uppercase tracking-wide px-2 py-1 rounded bg-yellow-900/30 border border-yellow-700">ZAR Accounts</span>
+                              <span className="text-xs text-slate-500">{zarClientRows.length} client{zarClientRows.length !== 1 ? 's' : ''}</span>
+                            </div>
+                            <ClientTable rows={zarClientRows} currencySymbol="R" fmtCur={fmtR} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 mb-3">
+                              <span className="text-xs font-bold text-emerald-400 uppercase tracking-wide px-2 py-1 rounded bg-emerald-900/30 border border-emerald-700">USD Accounts</span>
+                              <span className="text-xs text-slate-500">{usdClientRows.length} client{usdClientRows.length !== 1 ? 's' : ''}</span>
+                            </div>
+                            <ClientTable rows={usdClientRows} currencySymbol="$" fmtCur={fmtD} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} />
+                          </div>
+                        </div>
+                      )
+                    )}
+                  </div>
+                </>                  {/* Daily Spend Block */}
                   {pacingData?.dailyData?.length > 0 && (
                     <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
                       <div className="flex items-center justify-between mb-4">
@@ -2076,51 +2124,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                     </div>
                   )}
 
-                  {/* Client Breakdown — with compare mode + drill-down */}
-                  <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wide flex items-center gap-2">
-                        <Users className="w-4 h-4" />
-                        {compareMode ? 'Account Comparison' : 'Client Breakdown'}
-                        <span className="text-slate-500 text-xs font-normal normal-case">{activeAccountCount} clients · ranked by spend</span>
-                      </h3>
-                      {compareMode && compareSelected.length >= 2 && (
-                        <span className="text-xs text-purple-300 bg-purple-900/40 px-2 py-1 rounded-lg">
-                          ▲ = best in column
-                        </span>
-                      )}
-                    </div>
 
-                    {compareMode && compareSelected.length >= 2 ? (
-                      <ComparisonTable
-                        accounts={accounts.filter(a => selectedAccounts.includes(a.id) && !excludedAccounts.includes(a.id))}
-                        accountTotals={pacingData?.accountTotals}
-                        selectedIds={compareSelected}
-                      />
-                    ) : (
-                      clientRows.length === 0 ? (
-                        <p className="text-slate-500 text-sm text-center py-6">No client data available</p>
-                      ) : (
-                        <div className="space-y-8">
-                          <div>
-                            <div className="flex items-center gap-2 mb-3">
-                              <span className="text-xs font-bold text-yellow-400 uppercase tracking-wide px-2 py-1 rounded bg-yellow-900/30 border border-yellow-700">ZAR Accounts</span>
-                              <span className="text-xs text-slate-500">{zarClientRows.length} client{zarClientRows.length !== 1 ? 's' : ''}</span>
-                            </div>
-                            <ClientTable rows={zarClientRows} currencySymbol="R" fmtCur={fmtR} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2 mb-3">
-                              <span className="text-xs font-bold text-emerald-400 uppercase tracking-wide px-2 py-1 rounded bg-emerald-900/30 border border-emerald-700">USD Accounts</span>
-                              <span className="text-xs text-slate-500">{usdClientRows.length} client{usdClientRows.length !== 1 ? 's' : ''}</span>
-                            </div>
-                            <ClientTable rows={usdClientRows} currencySymbol="$" fmtCur={fmtD} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} />
-                          </div>
-                        </div>
-                      )
-                    )}
-                  </div>
-                </>
               )}
             </>
           )}
