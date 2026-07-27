@@ -54,7 +54,7 @@ function getPacingStatus(actual, ideal) {
   const ratio = actual / ideal;
   if (ratio >= 0.9 && ratio <= 1.1) return { label: 'On Track', color: 'emerald', icon: CheckCircle };
   if (ratio < 0.9) return { label: 'Under Pacing', color: 'yellow', icon: AlertCircle };
-  return { label: 'Over Pacing', color: 'red', icon: XCircle };
+  return { label: 'Over Pacing', color: 'emerald', icon: CheckCircle }; // green — over is good
 }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
@@ -460,7 +460,7 @@ function calcCPC(spend, clicks) {
 }
 
 // ── DailyChart (with optional forecast line) ──────────────────────────────────
-function DailyChart({ dailyData, idealDailySpend, forecastData, budgetUSD }) {
+function DailyChart({ dailyData, idealDailySpend, forecastData, budgetUSD, avgLastMonthDaily }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
 
@@ -499,6 +499,7 @@ function DailyChart({ dailyData, idealDailySpend, forecastData, budgetUSD }) {
       const datasets = [
         { label: 'Daily Spend ($)', data: paddedSpends, backgroundColor: barColors, borderRadius: 4, order: 3, type: 'bar' },
         { label: 'Ideal Daily ($)', data: idealLine, type: 'line', borderColor: 'rgba(147,197,253,0.7)', borderWidth: 2, borderDash: [5, 4], pointRadius: 0, fill: false, order: 1 },
+        ...(avgLastMonthDaily > 0 ? [{ label: 'Last Month Avg ($)', data: allLabels.map(() => parseFloat(avgLastMonthDaily.toFixed(2))), type: 'line', borderColor: 'rgba(251,191,36,0.8)', borderWidth: 2, borderDash: [4, 3], pointRadius: 0, fill: false, order: 0 }] : []),
       ];
 
       if (forecastData && forecastData.length > 0) {
@@ -1820,7 +1821,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                   </div>
                   <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Month-End Forecast</div>
-                    <div className={`text-2xl font-bold mb-1 ${trendVsLastMonth > 5 ? 'text-blue-400' : trendVsLastMonth < -5 ? 'text-yellow-400' : 'text-emerald-400'}`}>
+                    <div className={`text-2xl font-bold mb-1 ${trendVsLastMonth >= 0 ? 'text-emerald-400' : trendVsLastMonth < -5 ? 'text-yellow-400' : 'text-slate-300'}`}>
                       {fmtD(trendProjected)}
                     </div>
                     <div className="text-xs text-slate-400">{lastMonthTotal > 0 ? `${trendVsLastMonth >= 0 ? '+' : ''}${trendVsLastMonth.toFixed(1)}% vs last month` : `Avg ${fmtD(avgDailySpend)}/day`}</div>
@@ -2001,6 +2002,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                         <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-red-400"></div>Over</div>
                         <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-purple-300"></div>Forecast</div>
                         <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-blue-300"></div>Ideal</div>
+                        <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-yellow-300"></div>Last Mo. Avg</div>
                       </div>
                     </div>
                     {loading ? (
@@ -2013,6 +2015,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                         idealDailySpend={idealDailySpend}
                         forecastData={forecastData}
                         budgetUSD={budgetUSD}
+                        avgLastMonthDaily={lastMonthTotal > 0 && lastMonthDays > 0 ? lastMonthTotal / lastMonthDays : 0}
                       />
                     ) : (
                       <div className="flex items-center justify-center h-64 text-slate-500 text-sm">
@@ -2020,6 +2023,58 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                       </div>
                     )}
                   </div>
+
+                  {/* Daily Spend Block */}
+                  {pacingData?.dailyData?.length > 0 && (
+                    <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-sm font-bold text-white uppercase tracking-wide">Daily Spend Breakdown</h3>
+                        <span className="text-xs text-slate-400">{pacingData.dailyData.length} days</span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-700">
+                              <th className="text-left py-2 px-3 text-slate-400 font-semibold">Date</th>
+                              <th className="text-right py-2 px-3 text-slate-400 font-semibold">Spend (USD)</th>
+                              <th className="text-right py-2 px-3 text-slate-400 font-semibold">vs Last Mo. Avg</th>
+                              <th className="text-right py-2 px-3 text-slate-400 font-semibold">Impressions</th>
+                              <th className="text-right py-2 px-3 text-slate-400 font-semibold">Clicks</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[...pacingData.dailyData].reverse().map((d, i) => {
+                              const avg = lastMonthTotal > 0 && lastMonthDays > 0 ? lastMonthTotal / lastMonthDays : 0;
+                              const diff = avg > 0 ? d.spend - avg : null;
+                              const isOver = diff !== null && diff > 0;
+                              return (
+                                <tr key={d.date} className={`border-b border-slate-700/50 ${i % 2 === 0 ? 'bg-slate-700/20' : ''}`}>
+                                  <td className="py-2 px-3 text-slate-300 font-mono">{d.date}</td>
+                                  <td className="py-2 px-3 text-right font-mono text-white font-semibold">{fmtD(d.spend)}</td>
+                                  <td className={`py-2 px-3 text-right font-mono font-semibold ${diff === null ? 'text-slate-500' : isOver ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {diff === null ? '—' : `${isOver ? '+' : ''}${fmtD(diff)}`}
+                                  </td>
+                                  <td className="py-2 px-3 text-right font-mono text-slate-400">{(d.impressions || 0).toLocaleString()}</td>
+                                  <td className="py-2 px-3 text-right font-mono text-slate-400">{(d.clicks || 0).toLocaleString()}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                          <tfoot>
+                            <tr className="border-t-2 border-slate-600">
+                              <td className="py-2 px-3 text-slate-400 font-bold">Total</td>
+                              <td className="py-2 px-3 text-right font-mono text-white font-bold">{fmtD(totalSpend)}</td>
+                              <td className="py-2 px-3 text-right font-mono text-slate-500 font-bold">
+                                {lastMonthTotal > 0 ? `Avg: ${fmtD(lastMonthTotal / lastMonthDays)}/day` : '—'}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono text-slate-400 font-bold">{(pacingData.dailyData.reduce((s,d) => s + (d.impressions||0), 0)).toLocaleString()}</td>
+                              <td className="py-2 px-3 text-right font-mono text-slate-400 font-bold">{(pacingData.dailyData.reduce((s,d) => s + (d.clicks||0), 0)).toLocaleString()}</td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Client Breakdown — with compare mode + drill-down */}
                   <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
