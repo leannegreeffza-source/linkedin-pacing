@@ -1818,7 +1818,9 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                         const prevMonth = m === 0 ? 12 : m;
                         const prevYear  = m === 0 ? y - 1 : y;
                         const firstDay  = `${prevYear}-${String(prevMonth).padStart(2,'0')}-01`;
-                        const lastDay   = new Date(prevYear, prevMonth, 0).toISOString().split('T')[0];
+                        // Use local date to avoid UTC timezone shift cutting off last day
+                        const lastDate  = new Date(prevYear, prevMonth, 0);
+                        const lastDay   = `${lastDate.getFullYear()}-${String(lastDate.getMonth()+1).padStart(2,'0')}-${String(lastDate.getDate()).padStart(2,'0')}`;
                         return lastMonthData ? `${firstDay} → ${lastDay}` : 'Prior month';
                       })()}
                     </div>
