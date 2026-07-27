@@ -1226,20 +1226,26 @@ export default function PacingDashboard() {
   }
 
   // Derived values — date range data
-  const totalSpend = pacingData?.summary?.totalSpend || 0;
-  const todaySpend = pacingData?.summary?.todaySpend || 0;
-  const yesterdaySpend = pacingData?.summary?.yesterdaySpend || 0;
-  const dayBeforeYesterdaySpend = (() => {
-    const d = new Date(); d.setDate(d.getDate() - 2);
-    const dateStr = d.toISOString().split('T')[0];
-    return (pacingData?.dailyData || []).find(d => d.date === dateStr)?.spend || 0;
-  })();
-  const totalDays = pacingData?.summary?.totalDays || 1;
-  const daysElapsed = pacingData?.summary?.daysElapsed || 1;
-
-  const totalImpressions = pacingData?.summary?.totalImpressions || 0;
-  const totalClicks      = pacingData?.summary?.totalClicks      || 0;
-  const totalLeads       = pacingData?.summary?.totalLeads       || 0;
+  // Wrapped in useMemo so numbers only change when pacingData actually changes,
+  // not on every scroll/render cycle.
+  const {
+    totalSpend, todaySpend, yesterdaySpend, dayBeforeYesterdaySpend,
+    totalDays, daysElapsed, totalImpressions, totalClicks, totalLeads
+  } = React.useMemo(() => ({
+    totalSpend:              pacingData?.summary?.totalSpend       || 0,
+    todaySpend:              pacingData?.summary?.todaySpend       || 0,
+    yesterdaySpend:          pacingData?.summary?.yesterdaySpend   || 0,
+    dayBeforeYesterdaySpend: (() => {
+      const d = new Date(); d.setDate(d.getDate() - 2);
+      const dateStr = d.toISOString().split('T')[0];
+      return (pacingData?.dailyData || []).find(d => d.date === dateStr)?.spend || 0;
+    })(),
+    totalDays:               pacingData?.summary?.totalDays        || 1,
+    daysElapsed:             pacingData?.summary?.daysElapsed      || 1,
+    totalImpressions:        pacingData?.summary?.totalImpressions || 0,
+    totalClicks:             pacingData?.summary?.totalClicks      || 0,
+    totalLeads:              pacingData?.summary?.totalLeads       || 0,
+  }), [pacingData]);
 
   const prevTotalSpend       = prevPacingData?.summary?.totalSpend       || 0;
   const prevTotalImpressions = prevPacingData?.summary?.totalImpressions || 0;
@@ -1767,7 +1773,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
           ) : (
             <>
               {/* Summary Cards — mode-aware */}
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-5 gap-4">
                 {pacingMode === 'target' ? (<>
                   <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Target</div>
@@ -1794,6 +1800,18 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                       {fmtD(isCurrentMonth ? projectedMonthTotal : totalSpend)}
                     </div>
                     <div className="text-xs text-slate-400">{isCurrentMonth ? `Avg ${fmtD(avgDailySpend)}/day` : 'Final spend'}</div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Today's Spend</div>
+                    <div className={`text-2xl font-bold mb-1 ${todaySpend >= (idealDailySpend > 0 ? idealDailySpend * 0.9 : 0) ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                      {fmtD(todaySpend)}
+                    </div>
+                    <div className="text-xs text-slate-400 flex items-center gap-1">
+                      <span>Yesterday: {fmtD(yesterdaySpend)}</span>
+                      {yesterdaySpend > 0 && <span className={todaySpend >= yesterdaySpend ? 'text-emerald-400' : 'text-red-400'}>
+                        {todaySpend >= yesterdaySpend ? '▲' : '▼'} {Math.abs(((todaySpend - yesterdaySpend) / yesterdaySpend) * 100).toFixed(1)}%
+                      </span>}
+                    </div>
                   </div>
                 </>) : (<>
                   <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
@@ -1831,6 +1849,18 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                       {fmtD(trendProjected)}
                     </div>
                     <div className="text-xs text-slate-400">{lastMonthTotal > 0 ? `${trendVsLastMonth >= 0 ? '+' : ''}${trendVsLastMonth.toFixed(1)}% vs last month` : `Avg ${fmtD(avgDailySpend)}/day`}</div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Today's Spend</div>
+                    <div className={`text-2xl font-bold mb-1 ${lastMonthTotal > 0 && todaySpend >= lastMonthTotal / lastMonthDays ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                      {fmtD(todaySpend)}
+                    </div>
+                    <div className="text-xs text-slate-400 flex items-center gap-1">
+                      <span>Yesterday: {fmtD(yesterdaySpend)}</span>
+                      {yesterdaySpend > 0 && <span className={todaySpend >= yesterdaySpend ? 'text-emerald-400' : 'text-red-400'}>
+                        {todaySpend >= yesterdaySpend ? '▲' : '▼'} {Math.abs(((todaySpend - yesterdaySpend) / yesterdaySpend) * 100).toFixed(1)}%
+                      </span>}
+                    </div>
                   </div>
                 </>)}
               </div>
