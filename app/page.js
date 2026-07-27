@@ -11,7 +11,7 @@ import {
   TrendingUp, TrendingDown, DollarSign, RefreshCw,
   CheckCircle, AlertCircle, XCircle, Edit3, Save, X,
   ChevronUp, ChevronDown, Users, Calendar, Target, Minus, Search,
-  EyeOff, Eye, Download, FileText, Sparkles, FileSpreadsheet
+  EyeOff, Eye, Download, FileText, Sparkles, FileSpreadsheet, Upload, Activity
 } from 'lucide-react';
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -21,6 +21,20 @@ function fmt(n, decimals = 2) {
 }
 function fmtD(n) { return `$${fmt(n)}`; }
 function fmtR(n) { return `R${fmt(n)}`; }
+
+// Detect billing currency. Priority:
+// 1. Real API field (currencyCode/currency) if the accounts route ever returns one
+// 2. Known ZAR account IDs (add new ones here as they appear)
+// 3. Account-name pattern (e.g. "..._ZAR")
+const KNOWN_ZAR_ACCOUNT_IDS = new Set(['512261276', '518886222']);
+function detectCurrency(account) {
+  if (!account) return 'USD';
+  const api = (account.currencyCode || account.currency || '').toUpperCase();
+  if (api === 'ZAR' || api === 'USD') return api;
+  if (KNOWN_ZAR_ACCOUNT_IDS.has(String(account.id))) return 'ZAR';
+  const tokens = (account.name || '').toUpperCase().split(/[_\s-]+/);
+  return tokens.includes('ZAR') ? 'ZAR' : 'USD';
+}
 
 // ── Budget storage (localStorage, per calendar month — persists across date range changes) ──
 function getBudgetKey(year, month) { return `pacing_budget_${year}_${String(month).padStart(2,'0')}`; }
@@ -54,17 +68,112 @@ function firstOfMonth() {
 }
 
 // ── FilterSection ─────────────────────────────────────────────────────────────
+// ── ClientTable ───────────────────────────────────────────────────────────────
+function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClick }) {
+  const [search, setSearch] = React.useState('');
+  const filtered = !search ? rows
+    : rows.filter(r => r.name.toLowerCase().includes(search.toLowerCase()) || String(r.id).includes(search));
+  const totalToday     = filtered.reduce((s, r) => s + r.todaySpend, 0);
+  const totalYesterday = filtered.reduce((s, r) => s + r.yesterdaySpend, 0);
+  const totalSpend     = filtered.reduce((s, r) => s + r.totalSpend, 0);
+  const totalImp       = filtered.reduce((s, r) => s + (r.totalImpressions || 0), 0);
+  const totalClk       = filtered.reduce((s, r) => s + (r.totalClicks || 0), 0);
+  return (
+    <div>
+      {rows.length > 0 && (
+        <div className="flex items-center gap-3 mb-3 flex-wrap">
+          <div className="relative max-w-xs flex-1 min-w-[180px]">
+            <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-slate-400" />
+            <input type="text" placeholder="Search client or account ID..."
+              value={search} onChange={e => setSearch(e.target.value)}
+              className="w-full pl-8 pr-8 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500" />
+            {search && <button onClick={() => setSearch('')} className="absolute right-2 top-1.5 text-slate-400 hover:text-white"><X className="w-3.5 h-3.5" /></button>}
+          </div>
+          {rows.some(r => r.isNewSpender) && (
+            <div className="flex items-center gap-1.5 text-xs text-red-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
+              New this month (no spend last month)
+            </div>
+          )}
+        </div>
+      )}
+      {rows.length === 0
+        ? <p className="text-slate-500 text-sm text-center py-6">No accounts in this currency group</p>
+        : filtered.length === 0
+        ? <p className="text-slate-500 text-sm text-center py-6">No results for "{search}"</p>
+        : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-700">
+                {['Client', 'Account ID', "Today's Spend", "Yesterday's Spend", 'Total', 'Impressions', 'CTR', 'CPC'].map(h => (
+                  <th key={h} className={`pb-3 text-xs text-slate-400 font-bold uppercase tracking-wide ${h === 'Client' || h === 'Account ID' ? 'text-left' : 'text-right'}`}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((client, i) => (
+                <tr key={client.id}
+                  className={`border-b border-slate-700/50 ${client.isNewSpender ? 'bg-red-900/20 hover:bg-red-900/30' : i % 2 !== 0 ? 'bg-slate-700/20 hover:bg-slate-700/40' : 'hover:bg-slate-700/40'} cursor-pointer`}
+                  onClick={() => onRowClick(client)}>
+                  <td className="py-2.5 pr-4 max-w-xs">
+                    <div className="flex items-center gap-1.5">
+                      {client.isNewSpender && <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" title="Spent this month, no spend last month" />}
+                      <div className={`font-semibold text-xs truncate hover:text-blue-300 ${client.isNewSpender ? 'text-red-300' : 'text-white'}`}>{client.name}</div>
+                    </div>
+                  </td>
+                  <td className="py-2.5 pr-4"><div className="text-xs text-slate-400 font-mono">{client.id}</div></td>
+                  <td className="py-2.5 text-right font-mono text-white text-xs">{fmtCur(client.todaySpend)}</td>
+                  <td className="py-2.5 text-right font-mono text-slate-300 text-xs">{fmtCur(client.yesterdaySpend)}</td>
+                  <td className="py-2.5 text-right font-bold text-white text-xs">{fmtCur(client.totalSpend)}</td>
+                  <td className="py-2.5 text-right font-mono text-slate-300 text-xs">{(client.totalImpressions||0).toLocaleString()}</td>
+                  <td className="py-2.5 text-right font-mono text-slate-300 text-xs">{client.ctr.toFixed(2)}%</td>
+                  <td className="py-2.5 text-right font-mono text-slate-300 text-xs">{currencySymbol}{client.cpc.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+            {filtered.length > 1 && (
+              <tfoot>
+                <tr className="border-t-2 border-slate-600 bg-slate-700/40">
+                  <td className="py-3 font-bold text-white text-xs uppercase" colSpan={2}>
+                    Total{search ? ` (${filtered.length} of ${rows.length})` : ''}
+                  </td>
+                  <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtCur(totalToday)}</td>
+                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{fmtCur(totalYesterday)}</td>
+                  <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtCur(totalSpend)}</td>
+                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{totalImp.toLocaleString()}</td>
+                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{calcCTR(totalClk, totalImp).toFixed(2)}%</td>
+                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{currencySymbol}{calcCPC(totalSpend, totalClk).toFixed(2)}</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+          <p className="text-xs text-slate-600 mt-3">Click any row to drill into that account</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FilterSection({ title, icon: Icon, items, selectedIds, onToggle, loading,
   searchValue, onSearchChange, onSelectFiltered, onDeselectFiltered,
-  excludedIds, onToggleExclude,
+  excludedIds, onToggleExclude, onUploadExclusion, onClearExclusion, uploadingExcl, uploadedCount,
   totalCount, accentColor = 'blue', emptyMessage = 'No items found', showExclude = false }) {
 
-  const filtered = items.filter(item =>
+  const [showExcluded, setShowExcluded] = React.useState(false);
+  const fileInputRef = React.useRef(null);
+
+  // Visible items: non-excluded by default; show excluded when toggled
+  const activeItems  = items.filter(i => !excludedIds?.includes(i.id));
+  const excludedItems = items.filter(i => excludedIds?.includes(i.id));
+  const listItems = showExcluded ? excludedItems : activeItems;
+
+  const filtered = listItems.filter(item =>
     !searchValue ||
     item.name.toLowerCase().includes(searchValue.toLowerCase()) ||
     String(item.id).includes(searchValue)
   );
-  const selectedCount = selectedIds.length;
+  const selectedCount = selectedIds.filter(id => !excludedIds?.includes(id)).length;
 
   const colors = {
     blue:    { badge: 'text-blue-400', selected: 'bg-blue-900/40 border-blue-600', btn: 'bg-blue-700 hover:bg-blue-600' },
@@ -75,21 +184,51 @@ function FilterSection({ title, icon: Icon, items, selectedIds, onToggle, loadin
 
   return (
     <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
-      <div className="flex items-center justify-between mb-3">
+      {/* Header row */}
+      <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-2">
           <Icon className="w-3.5 h-3.5" /> {title}
         </h3>
         {loading
           ? <span className="text-xs text-slate-400 flex items-center gap-1"><RefreshCw className="w-3 h-3 animate-spin" /></span>
-          : <span className={`text-xs font-bold ${c.badge}`}>{selectedCount}/{totalCount || items.length}</span>
+          : <span className={`text-xs font-bold ${c.badge}`}>{selectedCount}/{activeItems.length}</span>
         }
       </div>
 
+      {/* Exclusion controls — upload + stats */}
+      {showExclude && (
+        <div className="mb-3 pb-3 border-b border-slate-700 space-y-1.5">
+          <div className="flex items-center gap-2">
+            <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden"
+              onChange={e => { onUploadExclusion?.(e.target.files?.[0]); fileInputRef.current.value=''; }} />
+            <button onClick={() => fileInputRef.current?.click()} disabled={uploadingExcl}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 flex-1 justify-center">
+              <Upload className="w-3 h-3" />
+              {uploadingExcl ? 'Parsing…' : 'Upload Exclusion List'}
+            </button>
+            {uploadedCount > 0 && (
+              <button onClick={onClearExclusion} className="text-xs text-slate-500 hover:text-red-400 transition-colors px-2 py-1.5 bg-slate-700 rounded-lg" title="Clear uploaded exclusion list">
+                ✕ Clear
+              </button>
+            )}
+          </div>
+          {excludedIds?.length > 0 && (
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-red-400">{excludedIds.length} excluded{uploadedCount > 0 ? ` (${uploadedCount} from file)` : ''}</span>
+              <button onClick={() => setShowExcluded(s => !s)}
+                className={`text-xs px-2 py-0.5 rounded transition-colors ${showExcluded ? 'bg-red-900/40 text-red-300' : 'text-slate-500 hover:text-slate-300'}`}>
+                {showExcluded ? `Hide excluded` : `Show excluded (${excludedItems.length})`}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Search */}
       <div className="relative mb-2">
         <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-slate-400" />
-        <input
-          type="text"
-          placeholder={`Search ${title.toLowerCase()}...`}
+        <input type="text"
+          placeholder={showExcluded ? 'Search excluded…' : `Search ${title.toLowerCase()}...`}
           value={searchValue}
           onChange={e => onSearchChange(e.target.value)}
           className="w-full pl-8 pr-8 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
@@ -101,47 +240,52 @@ function FilterSection({ title, icon: Icon, items, selectedIds, onToggle, loadin
         )}
       </div>
 
-      <div className="flex gap-2 mb-2">
-        <button onClick={() => onSelectFiltered(filtered)}
-          className={`flex-1 px-2 py-1 text-white rounded text-xs font-medium ${c.btn}`}>
-          {searchValue ? `Select (${filtered.length})` : 'All'}
-        </button>
-        <button onClick={() => onDeselectFiltered(filtered)}
-          className="flex-1 px-2 py-1 bg-slate-600 text-slate-300 rounded text-xs font-medium hover:bg-slate-500">
-          {searchValue ? `Deselect (${filtered.filter(i => selectedIds.includes(i.id)).length})` : 'None'}
-        </button>
-      </div>
-
-      {searchValue && (
-        <div className="text-xs text-slate-500 mb-2 px-1">
-          {filtered.length} of {items.length} shown
+      {/* All / None buttons — only show for active list */}
+      {!showExcluded && (
+        <div className="flex gap-2 mb-2">
+          <button onClick={() => onSelectFiltered(filtered)}
+            className={`flex-1 px-2 py-1 text-white rounded text-xs font-medium ${c.btn}`}>
+            {searchValue ? `Select (${filtered.length})` : 'All'}
+          </button>
+          <button onClick={() => onDeselectFiltered(filtered)}
+            className="flex-1 px-2 py-1 bg-slate-600 text-slate-300 rounded text-xs font-medium hover:bg-slate-500">
+            {searchValue ? `Deselect (${filtered.filter(i => selectedIds.includes(i.id)).length})` : 'None'}
+          </button>
         </div>
       )}
 
+      {searchValue && (
+        <div className="text-xs text-slate-500 mb-2 px-1">{filtered.length} of {listItems.length} shown</div>
+      )}
+
+      {/* Account list */}
       <div className="space-y-1.5 max-h-52 overflow-y-auto pr-0.5">
         {filtered.map(item => {
+          const isExcluded = excludedIds?.includes(item.id);
           const selected = selectedIds.includes(item.id);
-          const excluded = excludedIds?.includes(item.id);
           return (
             <label key={item.id}
-              className={`flex items-start gap-2.5 p-2.5 rounded-lg cursor-pointer border transition-colors ${
-                excluded ? 'border-red-700 bg-red-900/20 opacity-60' :
-                selected ? `${c.selected} text-white` : 'border-slate-600 text-slate-400 hover:bg-slate-700'
+              className={`flex items-start gap-2.5 p-2.5 rounded-lg border transition-colors ${
+                isExcluded
+                  ? 'border-red-800 bg-red-900/10 cursor-default'
+                  : selected
+                  ? `${c.selected} text-white cursor-pointer`
+                  : 'border-slate-600 text-slate-400 hover:bg-slate-700 cursor-pointer'
               }`}>
-              <input type="checkbox" checked={selected && !excluded} onChange={() => !excluded && onToggle(item.id)}
-                className="w-3.5 h-3.5 accent-blue-500 mt-0.5 flex-shrink-0" disabled={excluded} />
+              {!isExcluded && (
+                <input type="checkbox" checked={selected} onChange={() => onToggle(item.id)}
+                  className="w-3.5 h-3.5 accent-blue-500 mt-0.5 flex-shrink-0" />
+              )}
               <div className="min-w-0 flex-1">
-                <div className={`text-xs font-semibold truncate ${excluded ? 'text-red-400 line-through' : 'text-white'}`}>{item.name}</div>
+                <div className={`text-xs font-semibold truncate ${isExcluded ? 'text-red-400' : 'text-white'}`}>{item.name}</div>
                 <div className="text-xs text-slate-500 font-mono">ID: {item.id}</div>
-                {excluded && <div className="text-xs text-red-400 font-medium">Excluded</div>}
               </div>
               {showExclude && onToggleExclude && (
-                <button
-                  type="button"
+                <button type="button"
                   onClick={e => { e.preventDefault(); e.stopPropagation(); onToggleExclude(item.id); }}
-                  className={`ml-auto flex-shrink-0 p-1 rounded transition-colors ${excluded ? 'text-red-400 hover:text-white' : 'text-slate-500 hover:text-red-400'}`}
-                  title={excluded ? 'Remove exclusion' : 'Exclude account'}>
-                  {excluded ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  className={`ml-auto flex-shrink-0 p-1 rounded transition-colors ${isExcluded ? 'text-emerald-400 hover:text-emerald-300' : 'text-slate-500 hover:text-red-400'}`}
+                  title={isExcluded ? 'Re-include this account' : 'Exclude this account'}>
+                  {isExcluded ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
                 </button>
               )}
             </label>
@@ -149,7 +293,7 @@ function FilterSection({ title, icon: Icon, items, selectedIds, onToggle, loadin
         })}
         {filtered.length === 0 && !loading && (
           <p className="text-xs text-slate-500 text-center py-4">
-            {searchValue ? `No results for "${searchValue}"` : emptyMessage}
+            {showExcluded ? 'No excluded accounts' : searchValue ? `No results for "${searchValue}"` : emptyMessage}
           </p>
         )}
       </div>
@@ -666,34 +810,47 @@ function ComparisonTable({ accounts, accountTotals, selectedIds }) {
 }
 
 // ── Export helpers ────────────────────────────────────────────────────────────
-function exportToExcel(clientRows, dailyData, startDate, endDate, totalSpend, budgetUSD) {
-  // Build a simple CSV that Excel can open
-  const lines = [];
-  lines.push(`LinkedIn Pacing Tracker Report`);
-  lines.push(`Period,${startDate} to ${endDate}`);
-  lines.push(`Total Spend,$${totalSpend.toFixed(2)}`);
-  lines.push(`Budget,$${budgetUSD > 0 ? budgetUSD.toFixed(2) : 'Not set'}`);
-  lines.push('');
-  lines.push('CLIENT BREAKDOWN');
-  lines.push('Rank,Client,Account ID,Today Spend,Yesterday Spend,Month Total,% of Target');
-  clientRows.forEach((c, i) => {
-    lines.push(`${i + 1},"${c.name}",${c.id},$${c.todaySpend.toFixed(2)},$${c.yesterdaySpend.toFixed(2)},$${c.totalSpend.toFixed(2)},${budgetUSD > 0 ? c.pct.toFixed(1) + '%' : 'N/A'}`);
-  });
-  lines.push('');
-  lines.push('DAILY SPEND DATA');
-  lines.push('Date,Spend,Impressions,Clicks,Leads');
-  dailyData.forEach(d => {
-    lines.push(`${d.date},$${d.spend.toFixed(2)},${d.impressions},${d.clicks},${d.leads}`);
-  });
-
-  const csv = lines.join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `linkedin_pacing_${startDate}_${endDate}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+async function exportToExcel(clientRows, dailyData, startDate, endDate, totalSpend, budgetUSD) {
+  if (!window.XLSX) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  const XLSX = window.XLSX;
+  const wb = XLSX.utils.book_new();
+  const ws1 = XLSX.utils.aoa_to_sheet([
+    ['LinkedIn Pacing Report'],
+    ['Period', `${startDate} to ${endDate}`],
+    ['Total Spend', totalSpend],
+    ['Target', budgetUSD > 0 ? budgetUSD : 'Not set'],
+    ['Generated', new Date().toLocaleString()],
+    [],
+    ['Client Name','Account ID',"Today's Spend ($)","Yesterday's Spend ($)",'Total Spend ($)','Impressions','Clicks','CTR (%)','CPM ($)','CPC ($)','% of Target'],
+    ...clientRows.map(c => [
+      c.name, c.id,
+      parseFloat(c.todaySpend.toFixed(2)), parseFloat(c.yesterdaySpend.toFixed(2)),
+      parseFloat(c.totalSpend.toFixed(2)), c.totalImpressions||0, c.totalClicks||0,
+      parseFloat(((c.totalClicks||0)/Math.max(c.totalImpressions||1,1)*100).toFixed(2)),
+      parseFloat(((c.totalSpend||0)/Math.max(c.totalImpressions||1,1)*1000).toFixed(2)),
+      parseFloat(((c.totalSpend||0)/Math.max(c.totalClicks||1,1)).toFixed(2)),
+      budgetUSD > 0 ? parseFloat(c.pct.toFixed(1)) : 'N/A',
+    ]),
+  ]);
+  ws1['!cols'] = [40,15,16,18,16,14,10,10,10,10,14].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, ws1, 'Client Breakdown');
+  const ws2 = XLSX.utils.aoa_to_sheet([
+    ['Date','Spend ($)','Impressions','Clicks','Leads','CTR (%)','CPM ($)','CPC ($)'],
+    ...dailyData.map(d => [d.date, parseFloat(d.spend.toFixed(2)), d.impressions, d.clicks, d.leads,
+      parseFloat((d.impressions>0?d.clicks/d.impressions*100:0).toFixed(2)),
+      parseFloat((d.impressions>0?d.spend/d.impressions*1000:0).toFixed(2)),
+      parseFloat((d.clicks>0?d.spend/d.clicks:0).toFixed(2))]),
+  ]);
+  ws2['!cols'] = [14,12,14,10,10,10,10,10].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, ws2, 'Daily Spend');
+  XLSX.writeFile(wb, `linkedin_pacing_${startDate}_${endDate}.xlsx`);
 }
 
 function exportToPDF(clientRows, dailyData, startDate, endDate, totalSpend, budgetUSD, pacingLabel) {
@@ -724,7 +881,7 @@ function exportToPDF(clientRows, dailyData, startDate, endDate, totalSpend, budg
       .status { display:inline-block; padding:4px 12px; border-radius:20px; font-weight:600; font-size:12px; background:#dcfce7; color:#166534; }
       @media print { body { margin: 20px; } }
     </style></head><body>
-    <h1>LinkedIn Pacing Tracker Report</h1>
+    <h1>LinkedIn Pacing Report</h1>
     <p style="color:#64748b">Period: <strong>${startDate}</strong> to <strong>${endDate}</strong></p>
     <div class="meta">
       <div><div class="label">Total Spend</div><div class="value">$${totalSpend.toFixed(2)}</div></div>
@@ -752,10 +909,18 @@ export default function PacingDashboard() {
   const [clientSearch, setClientSearch] = useState('');
   const [exclusionSaving, setExclusionSaving] = useState(false);
 
-  // (Campaign Groups and Campaigns removed — pacing runs at account level only)
+  // (Campaign Groups and Campaigns removed)
+  const [uploadedExclusions, setUploadedExclusions] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pacing_uploaded_excl') || '[]'); } catch { return []; }
+  });
+  const [uploadingExcl, setUploadingExcl] = useState(false);
+  const exclusionFileRef = React.useRef(null);
+  const [pacingMode, setPacingMode] = useState('target');
+  const [lastMonthData, setLastMonthData] = useState(null);
+  const [loadingLastMonth, setLoadingLastMonth] = useState(false);
 
   // Date range
-  const [startDate, setStartDate] = useState(firstOfMonth());
+  const [startDate, setStartDate] = useState(() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-01`; });
   const [endDate, setEndDate] = useState(todayStr());
 
   // Budget
@@ -839,23 +1004,24 @@ export default function PacingDashboard() {
     loadAccounts();
   }, [platform]);
 
-  // Load campaign groups/campaigns when accounts change
   useEffect(() => {
-    if (selectedAccounts.length > 0) { loadCampaignGroups(); loadCampaigns(); }
-    else { setCampaignGroups([]); setSelectedGroups([]); setCampaigns([]); setSelectedCampaigns([]); }
+    if (pacingMode === 'trend' && selectedAccounts.length > 0) {
+      setLastMonthData(null);
+      loadLastMonth();
+    }
+  }, [pacingMode, selectedAccounts, excludedAccounts]);
+
+  // Always load last month in background (needed for new-spender detection
+  // in Client Breakdown regardless of pacing mode).
+  const hasLoadedLastMonth = React.useRef(false);
+  useEffect(() => {
+    if (selectedAccounts.length > 0 && !hasLoadedLastMonth.current) {
+      hasLoadedLastMonth.current = true;
+      loadLastMonth();
+    }
   }, [selectedAccounts]);
 
-  useEffect(() => {
-    if (selectedAccounts.length > 0) loadCampaigns();
-  }, [selectedGroups]);
-
-  // Auto-refresh (current period only)
-  useEffect(() => {
-    const isToday = endDate === todayStr();
-    if (!isToday || selectedAccounts.length === 0) return;
-    const interval = setInterval(() => loadPacing(), 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [selectedAccounts, startDate, endDate]);
+  // Auto-refresh removed — data only updates on manual Refresh button click
 
   async function loadAccounts() {
     setLoadingAccounts(true);
@@ -863,46 +1029,110 @@ export default function PacingDashboard() {
       const res = await fetch(`${apiPrefix}/accounts`);
       if (res.ok) {
         const data = await res.json();
-        setAccounts(data);
-        // Apply any saved exclusions immediately using the ref
+        // Normalize IDs to strings — the LinkedIn API returns numeric IDs but
+        // exclusion list IDs are always strings, so this prevents silent mismatches.
+        const normalized = data.map(a => ({ ...a, id: String(a.id) }));
+        setAccounts(normalized);
         const excl = excludedRef.current || [];
-        setSelectedAccounts(data.map(a => a.id).filter(id => !excl.includes(id)));
+        setSelectedAccounts(normalized.map(a => a.id).filter(id => !excl.includes(id)));
       }
     } catch (err) { console.error(err); }
     setLoadingAccounts(false);
   }
 
-  // Use a ref to hold exclusions so loadAccounts can read the latest value synchronously
   const excludedRef = React.useRef([]);
 
   async function loadExclusions() {
     try {
-      const res = await fetch('/api/exclusions');
-      const manualExcl = res.ok ? ((await res.json()).excludedAccountIds || []) : [];
-      let bodExcl = [];
-      try {
-        const bodRes = await fetch('/api/bod-ref');
-        if (bodRes.ok) {
-          const bodData = await bodRes.json();
-          bodExcl = (bodData.excludedIds || []).map(id => String(id));
-        }
-      } catch { /* bod-ref unavailable */ }
-      const merged = [...new Set([...bodExcl, ...manualExcl])];
-      excludedRef.current = merged;
-      setExcludedAccounts(merged);
-    } catch (err) { /* exclusions unavailable, continue without */ }
+      // Single source of truth: the uploaded exclusion file stored in localStorage.
+      // Manual per-account server exclusions are no longer used — the uploaded
+      // list is the only thing that drives what gets excluded.
+      let uploaded = [];
+      try { uploaded = JSON.parse(localStorage.getItem('pacing_uploaded_excl') || '[]'); } catch {}
+      // Normalize to strings to prevent type mismatches with account IDs from the API
+      const normalized = uploaded.map(String);
+      excludedRef.current = normalized;
+      setExcludedAccounts(normalized);
+      setUploadedExclusions(normalized);
+    } catch (err) {}
   }
 
-  async function saveExclusions(newExclusions) {
-    setExclusionSaving(true);
+  function saveExclusions(newExclusions) {
+    // Eye-icon manual toggles are session-only — not persisted to server.
+    // The uploaded exclusion file (localStorage) remains the persistent source of truth.
+    excludedRef.current = newExclusions;
+    setExcludedAccounts(newExclusions);
+  }
+
+  async function handleExclusionFileUpload(file) {
+    if (!file) return;
+    setUploadingExcl(true);
     try {
-      await fetch('/api/exclusions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ excludedAccountIds: newExclusions }),
+      if (!window.XLSX) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+          s.onload = resolve; s.onerror = reject;
+          document.head.appendChild(s);
+        });
+      }
+      const data = await file.arrayBuffer();
+      const wb = window.XLSX.read(data, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = window.XLSX.utils.sheet_to_json(ws, { header: 1 });
+      const ids = [];
+      rows.forEach(row => {
+        row.forEach(cell => {
+          const val = String(cell).trim();
+          if (/^\d{6,12}$/.test(val)) ids.push(val);
+        });
       });
+      // Normalize to strings — prevents type mismatch with numeric API account IDs
+      const unique = [...new Set(ids.map(String))];
+      localStorage.setItem('pacing_uploaded_excl', JSON.stringify(unique));
+      setUploadedExclusions(unique);
+      excludedRef.current = unique;
+      setExcludedAccounts(unique);
+      // Remove newly excluded accounts from selected immediately
+      setSelectedAccounts(prev => prev.filter(id => !unique.includes(String(id))));
+      alert(`Loaded ${unique.length} account IDs from exclusion list`);
+    } catch (err) {
+      alert('Failed to parse file. Use a CSV or Excel file with account IDs.');
+    }
+    setUploadingExcl(false);
+    if (exclusionFileRef.current) exclusionFileRef.current.value = '';
+  }
+
+  function clearUploadedExclusions() {
+    localStorage.removeItem('pacing_uploaded_excl');
+    setUploadedExclusions([]);
+    excludedRef.current = [];
+    setExcludedAccounts([]);
+    // Add all accounts back to selected
+    setSelectedAccounts(accounts.map(a => String(a.id)));
+  }
+
+  async function loadLastMonth() {
+    const zarIds = new Set(accounts.filter(a => detectCurrency(a) === 'ZAR').map(a => String(a.id)));
+    const activeIds = selectedAccounts.filter(id => !excludedAccounts.includes(id) && !zarIds.has(String(id)));
+    if (activeIds.length === 0) return;
+    setLoadingLastMonth(true);
+    try {
+      const now = new Date();
+      const prevEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+      const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const body = {
+        accountIds: activeIds,
+        startDate: prevStart.toISOString().split('T')[0],
+        endDate: prevEnd.toISOString().split('T')[0],
+      };
+      const res = await fetch(`${apiPrefix}/pacing`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) setLastMonthData(await res.json());
     } catch (err) { console.error(err); }
-    setExclusionSaving(false);
+    setLoadingLastMonth(false);
   }
 
   function toggleExcludeAccount(id) {
@@ -922,13 +1152,22 @@ export default function PacingDashboard() {
   }
 
   async function loadPacing() {
-    if (selectedAccounts.length === 0) return;
+    // Exclude ZAR-billed accounts from the pacing API call — their spend is
+    // denominated in rand, not USD, so including them corrupts the USD totals
+    // shown in the summary cards. ZAR accounts appear separately in the
+    // Client Breakdown table with their own R-denominated total.
+    const zarIds = new Set(
+      accounts
+        .filter(a => detectCurrency(a) === 'ZAR')
+        .map(a => String(a.id))
+    );
+    const usdOnlyIds = selectedAccounts.filter(id => !zarIds.has(String(id)));
+    if (usdOnlyIds.length === 0) return;
     setLoading(true);
     try {
-      const body = { accountIds: selectedAccounts, startDate, endDate };
+      const body = { accountIds: usdOnlyIds, startDate, endDate };
       const res = await fetch(`${apiPrefix}/pacing`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       if (res.ok) { setPacingData(await res.json()); setLastRefresh(new Date()); }
@@ -936,13 +1175,20 @@ export default function PacingDashboard() {
     setLoading(false);
   }
 
+  // Load pacing once on initial mount when accounts are ready.
+  // After that, only the Refresh button triggers a reload.
+  const hasInitiallyLoaded = React.useRef(false);
   useEffect(() => {
-    if (selectedAccounts.length > 0) loadPacing();
-    else setPacingData(null);
-  }, [selectedAccounts, startDate, endDate]);
+    if (selectedAccounts.length > 0 && !hasInitiallyLoaded.current) {
+      hasInitiallyLoaded.current = true;
+      loadPacing();
+    }
+  }, [selectedAccounts]);
 
   async function loadPrevPeriod() {
-    if (selectedAccounts.length === 0) return;
+    const zarIds = new Set(accounts.filter(a => detectCurrency(a) === 'ZAR').map(a => String(a.id)));
+    const usdOnlyIds = selectedAccounts.filter(id => !zarIds.has(String(id)));
+    if (usdOnlyIds.length === 0) return;
     setLoadingPrev(true);
     try {
       const start = new Date(startDate + 'T00:00:00');
@@ -950,7 +1196,7 @@ export default function PacingDashboard() {
       const spanDays = Math.round((end - start) / (1000*60*60*24));
       const prevEnd   = new Date(start); prevEnd.setDate(prevEnd.getDate() - 1);
       const prevStart = new Date(prevEnd); prevStart.setDate(prevStart.getDate() - spanDays);
-      const body = { accountIds: selectedAccounts, startDate: prevStart.toISOString().split('T')[0], endDate: prevEnd.toISOString().split('T')[0] };
+      const body = { accountIds: usdOnlyIds, startDate: prevStart.toISOString().split('T')[0], endDate: prevEnd.toISOString().split('T')[0] };
       const res = await fetch(`${apiPrefix}/pacing`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (res.ok) setPrevPacingData(await res.json());
     } catch (err) { console.error(err); }
@@ -966,8 +1212,11 @@ export default function PacingDashboard() {
   function makeToggle(setter) {
     return (id) => setter(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   }
-  function makeSelectFiltered(setter) {
-    return (filtered) => setter(prev => [...new Set([...prev, ...filtered.map(i => i.id)])]);
+  function makeSelectFiltered(setter, excludedIds) {
+    return (filtered) => {
+      const excl = excludedIds || excludedRef.current || [];
+      setter(prev => [...new Set([...prev, ...filtered.map(i => i.id).filter(id => !excl.includes(id))])]);
+    };
   }
   function makeDeselectFiltered(setter) {
     return (filtered) => { const toRemove = new Set(filtered.map(i => i.id)); setter(prev => prev.filter(id => !toRemove.has(id))); };
@@ -977,6 +1226,11 @@ export default function PacingDashboard() {
   const totalSpend = pacingData?.summary?.totalSpend || 0;
   const todaySpend = pacingData?.summary?.todaySpend || 0;
   const yesterdaySpend = pacingData?.summary?.yesterdaySpend || 0;
+  const dayBeforeYesterdaySpend = (() => {
+    const d = new Date(); d.setDate(d.getDate() - 2);
+    const dateStr = d.toISOString().split('T')[0];
+    return (pacingData?.dailyData || []).find(d => d.date === dateStr)?.spend || 0;
+  })();
   const totalDays = pacingData?.summary?.totalDays || 1;
   const daysElapsed = pacingData?.summary?.daysElapsed || 1;
 
@@ -1013,6 +1267,18 @@ export default function PacingDashboard() {
   // Avg daily spend based on days that have data
   const avgDailySpend = daysElapsed > 1 ? totalSpend / (daysElapsed - 1) : todaySpend;
 
+  // Day-by-day pacing — always available, never depends on a target being set.
+  const completedDays = (pacingData?.dailyData || []).filter(d => d.date < todayStr());
+  const last5Days = completedDays.slice(-5);
+  const dayPacingAvg = last5Days.length > 0
+    ? last5Days.reduce((s, d) => s + d.spend, 0) / last5Days.length
+    : avgDailySpend;
+  const latestDaySpend = last5Days.length > 0 ? last5Days[last5Days.length - 1].spend : yesterdaySpend;
+  const dayPacingDiff = latestDaySpend - dayPacingAvg;
+  const dayPacingPct  = dayPacingAvg > 0 ? (latestDaySpend / dayPacingAvg) * 100 : 100;
+  const dayPacingTrend = dayPacingPct >= 95 && dayPacingPct <= 105 ? 'Steady'
+    : dayPacingPct > 105 ? 'Trending Up' : 'Trending Down';
+
   // Projected end-of-month total = spend so far + avg daily * days left in month
   const projectedMonthTotal = isCurrentMonth
     ? totalSpend + avgDailySpend * daysRemainingInMonth
@@ -1031,6 +1297,18 @@ export default function PacingDashboard() {
   const budgetUsedPct = budgetUSD > 0 ? Math.min((totalSpend / budgetUSD) * 100, 100) : 0;
   const pacingPct = idealSpendToDate > 0 ? (totalSpend / idealSpendToDate) * 100 : 0;
 
+  const lastMonthTotal = lastMonthData?.summary?.totalSpend || 0;
+  const lastMonthDays = lastMonthData ? (() => { const s = new Date(lastMonthData.summary?.startDate+'T00:00:00'); const e = new Date(lastMonthData.summary?.endDate+'T00:00:00'); return Math.round((e-s)/(1000*60*60*24))+1; })() : 30;
+  const samePeriodLastMonth = (lastMonthTotal / lastMonthDays) * daysElapsed;
+  const trendPct = samePeriodLastMonth > 0 ? (totalSpend / samePeriodLastMonth) * 100 : 0;
+  const trendDiff = totalSpend - samePeriodLastMonth;
+  const trendStatus = samePeriodLastMonth === 0 ? { label: 'No Prior Data', color: 'slate' }
+    : trendPct >= 95 && trendPct <= 105 ? { label: 'On Par', color: 'emerald' }
+    : trendPct > 105 ? { label: 'Ahead of Last Month', color: 'blue' }
+    : { label: 'Behind Last Month', color: 'yellow' };
+  const trendProjected = totalSpend + avgDailySpend * daysRemainingInMonth;
+  const trendVsLastMonth = lastMonthTotal > 0 ? ((trendProjected - lastMonthTotal) / lastMonthTotal) * 100 : 0;
+
   const activeAccountCount = selectedAccounts.length;
   const perAccountBudget = budgetUSD > 0 && activeAccountCount > 0 ? budgetUSD / activeAccountCount : 0;
 
@@ -1040,14 +1318,17 @@ export default function PacingDashboard() {
 
   // ── Change 3: Ranked clients (top contributor first) ──────────────────────
   const clientRows = accounts
-    .filter(a => selectedAccounts.includes(a.id))
+    .filter(a => selectedAccounts.includes(a.id) && !excludedAccounts.includes(a.id))
     .map(a => {
       const totals = pacingData?.accountTotals?.find(t => t.accountId === a.id);
       const spend = totals?.totalSpend || 0;
       const imp   = totals?.totalImpressions || 0;
       const clk   = totals?.totalClicks || 0;
+      const lastMonthTotals = lastMonthData?.accountTotals?.find(t => t.accountId === a.id);
+      const lastMonthSpend = lastMonthTotals?.totalSpend || 0;
       return {
         ...a,
+        currency: detectCurrency(a),
         totalSpend: spend,
         todaySpend: totals?.todaySpend || 0,
         yesterdaySpend: totals?.yesterdaySpend || 0,
@@ -1059,9 +1340,16 @@ export default function PacingDashboard() {
         cpc: calcCPC(spend, clk),
         pct: perAccountBudget > 0 ? (spend / perAccountBudget) * 100 : 0,
         improved: (totals?.todaySpend || 0) >= (totals?.yesterdaySpend || 0),
+        lastMonthSpend,
+        isNewSpender: lastMonthData != null && spend > 0 && lastMonthSpend === 0,
       };
     })
+    .filter(c => c.totalSpend > 0) // hide zero-spend accounts
     .sort((a, b) => b.totalSpend - a.totalSpend); // Top contributor first
+
+  // Split by billing currency
+  const zarClientRows = clientRows.filter(c => c.currency === 'ZAR');
+  const usdClientRows = clientRows.filter(c => c.currency !== 'ZAR');
 
   const scMap = {
     emerald: { bg: 'bg-emerald-900/40', border: 'border-emerald-500', text: 'text-emerald-400', badge: 'bg-emerald-800 text-emerald-200', bar: 'bg-emerald-500' },
@@ -1296,10 +1584,9 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
             </h3>
             <div className="space-y-2">
               <div>
-                <label className="text-xs text-slate-500 block mb-1">Month (always starts 1st)</label>
-                <input type="month"
+                <label className="text-xs text-slate-500 block mb-1">Month (starts on the 1st)</label>
+                <select
                   value={startDate.slice(0, 7)}
-                  max={todayStr().slice(0, 7)}
                   onChange={e => {
                     const [y, m] = e.target.value.split('-');
                     const firstDay = `${y}-${m}-01`;
@@ -1308,8 +1595,16 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                     const isCurrentMo = parseInt(y) === now.getFullYear() && parseInt(m) === now.getMonth() + 1;
                     setEndDate(isCurrentMo ? todayStr() : toDateInput(new Date(parseInt(y), parseInt(m), 0)));
                   }}
-                  className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
-                <div className="text-xs text-slate-600 mt-1">From: {startDate}</div>
+                  className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500">
+                  {Array.from({ length: 12 }, (_, i) => {
+                    const now = new Date();
+                    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                    const val = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+                    const label = d.toLocaleString('default', { month: 'long', year: 'numeric' });
+                    return <option key={val} value={val}>{label}</option>;
+                  })}
+                </select>
+                <div className="text-xs text-slate-500 mt-1">From: {startDate}</div>
               </div>
               <div>
                 <label className="text-xs text-slate-500 block mb-1">End Date</label>
@@ -1320,22 +1615,47 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                   className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
               </div>
             </div>
-            {/* Quick month selectors */}
+            {/* Quick month buttons */}
             <div className="flex flex-wrap gap-1.5 mt-3">
-              {[0, 1, 2].map(offset => {
+              {Array.from({ length: 3 }, (_, offset) => {
                 const now = new Date();
                 const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
                 const y = d.getFullYear(), mo = d.getMonth();
+                const firstDay = `${y}-${String(mo+1).padStart(2,'0')}-01`;
+                const lastDay = offset === 0 ? todayStr() : toDateInput(new Date(y, mo+1, 0));
                 const label = offset === 0 ? 'This Month' : d.toLocaleString('default', { month: 'short' }) + ' ' + y;
-                const lastDay = offset === 0 ? todayStr() : toDateInput(new Date(y, mo + 1, 0));
+                const isActive = startDate === firstDay;
                 return (
-                  <button key={label}
-                    onClick={() => { setStartDate(toDateInput(new Date(y, mo, 1))); setEndDate(lastDay); }}
-                    className="px-2 py-1 bg-slate-700 hover:bg-blue-700 text-slate-300 hover:text-white rounded text-xs transition-colors">
+                  <button key={firstDay} onClick={() => { setStartDate(firstDay); setEndDate(lastDay); }}
+                    className={`px-2 py-1 rounded text-xs transition-colors ${isActive ? 'bg-blue-600 text-white' : 'bg-slate-700 hover:bg-blue-700 text-slate-300 hover:text-white'}`}>
                     {label}
                   </button>
                 );
               })}
+            </div>
+
+            {/* Pacing Mode */}
+            <div className="mt-4 pt-4 border-t border-slate-700">
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-2">
+                <Activity className="w-3.5 h-3.5" /> Pacing Mode
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button onClick={() => setPacingMode('target')}
+                  className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors text-center ${pacingMode === 'target' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+                  <div>🎯 Target</div>
+                  <div className="text-xs font-normal opacity-75 mt-0.5">vs set budget</div>
+                </button>
+                <button onClick={() => { setPacingMode('trend'); if (!lastMonthData && selectedAccounts.length > 0) loadLastMonth(); }}
+                  className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors text-center ${pacingMode === 'trend' ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+                  <div>📈 Trend</div>
+                  <div className="text-xs font-normal opacity-75 mt-0.5">vs last month</div>
+                </button>
+              </div>
+              {pacingMode === 'trend' && loadingLastMonth && (
+                <div className="text-xs text-slate-500 mt-2 flex items-center gap-1">
+                  <RefreshCw className="w-3 h-3 animate-spin" /> Loading last month…
+                </div>
+              )}
             </div>
             <div className="mt-2 text-center">
               <span className="text-xs bg-slate-700 text-slate-400 px-2 py-0.5 rounded-full">
@@ -1409,12 +1729,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
             <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Clients</span>
             {exclusionSaving && <RefreshCw className="w-3 h-3 text-slate-500 animate-spin ml-auto" />}
           </div>
-          {excludedAccounts.length > 0 && (
-            <div className="bg-red-900/20 border border-red-800 rounded-lg px-3 py-2 text-xs text-red-400 flex items-center gap-2">
-              <EyeOff className="w-3.5 h-3.5 flex-shrink-0" />
-              {excludedAccounts.length} account{excludedAccounts.length > 1 ? 's' : ''} excluded (BOD list + manual)
-            </div>
-          )}
+
           <FilterSection
             title="Clients"
             icon={Users}
@@ -1424,10 +1739,14 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
             loading={loadingAccounts}
             searchValue={clientSearch}
             onSearchChange={setClientSearch}
-            onSelectFiltered={makeSelectFiltered(setSelectedAccounts)}
+            onSelectFiltered={makeSelectFiltered(setSelectedAccounts, excludedAccounts)}
             onDeselectFiltered={makeDeselectFiltered(setSelectedAccounts)}
             excludedIds={excludedAccounts}
             onToggleExclude={toggleExcludeAccount}
+            onUploadExclusion={handleExclusionFileUpload}
+            onClearExclusion={clearUploadedExclusions}
+            uploadingExcl={uploadingExcl}
+            uploadedCount={uploadedExclusions.length}
             totalCount={accounts.length}
             accentColor="blue"
             emptyMessage="No accounts found"
@@ -1447,150 +1766,153 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
             </div>
           ) : (
             <>
-              {/* Summary Cards */}
+              {/* Summary Cards — mode-aware */}
               <div className="grid grid-cols-4 gap-4">
-                <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
-                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Target</div>
-                  <div className="text-2xl font-bold text-white mb-1">{budgetUSD > 0 ? fmtD(budgetUSD) : '-'}</div>
-                  <button onClick={() => setShowBudgetModal(true)}
-                    className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
-                    <Edit3 className="w-3 h-3" /> {budgetUSD > 0 ? 'Edit target' : 'Set target'}
-                  </button>
-                </div>
-                <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
-                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Spent to Date</div>
-                  <div className="text-2xl font-bold text-white mb-1">{fmtD(totalSpend)}</div>
-                  <div className="text-xs text-slate-400">
-                    {budgetUSD > 0 ? `${fmt(budgetUsedPct, 1)}% of budget` : `Day ${daysElapsed} of ${totalDays}`}
+                {pacingMode === 'target' ? (<>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Target</div>
+                    <div className="text-2xl font-bold text-white mb-1">{budgetUSD > 0 ? fmtD(budgetUSD) : '-'}</div>
+                    <button onClick={() => setShowBudgetModal(true)} className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                      <Edit3 className="w-3 h-3" /> {budgetUSD > 0 ? 'Edit target' : 'Set target'}
+                    </button>
                   </div>
-                </div>
-                <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
-                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Remaining</div>
-                  <div className={`text-2xl font-bold mb-1 ${budgetUSD > 0 && totalSpend > budgetUSD ? 'text-red-400' : 'text-white'}`}>
-                    {budgetUSD > 0 ? fmtD(remainingBudget) : '-'}
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Spent to Date</div>
+                    <div className="text-2xl font-bold text-white mb-1">{fmtD(totalSpend)}</div>
+                    <div className="text-xs text-slate-400">{budgetUSD > 0 ? `${fmt(budgetUsedPct, 1)}% of target` : `Day ${daysElapsed} of ${totalDays}`}</div>
                   </div>
-                  <div className="text-xs text-slate-400">{budgetUSD > 0 ? `${daysRemainingInMonth} days left in month` : 'Set a budget'}</div>
-                </div>
-                <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
-                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">
-                    {isCurrentMonth ? 'Month-End Forecast' : 'Final Spend'}
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Remaining</div>
+                    <div className={`text-2xl font-bold mb-1 ${budgetUSD > 0 && totalSpend > budgetUSD ? 'text-red-400' : 'text-white'}`}>
+                      {budgetUSD > 0 ? fmtD(remainingBudget) : '-'}
+                    </div>
+                    <div className="text-xs text-slate-400">{budgetUSD > 0 ? `${daysRemainingInMonth} days left` : 'Set a target'}</div>
                   </div>
-                  <div className={`text-2xl font-bold mb-1 ${
-                    budgetUSD > 0 && projectedMonthTotal > budgetUSD * 1.05 ? 'text-red-400' :
-                    budgetUSD > 0 && projectedMonthTotal < budgetUSD * 0.9 ? 'text-yellow-400' : 'text-white'
-                  }`}>
-                    {fmtD(isCurrentMonth ? projectedMonthTotal : totalSpend)}
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">{isCurrentMonth ? 'Month-End Forecast' : 'Final Spend'}</div>
+                    <div className={`text-2xl font-bold mb-1 ${budgetUSD > 0 && projectedMonthTotal > budgetUSD * 1.05 ? 'text-red-400' : budgetUSD > 0 && projectedMonthTotal < budgetUSD * 0.9 ? 'text-yellow-400' : 'text-white'}`}>
+                      {fmtD(isCurrentMonth ? projectedMonthTotal : totalSpend)}
+                    </div>
+                    <div className="text-xs text-slate-400">{isCurrentMonth ? `Avg ${fmtD(avgDailySpend)}/day` : 'Final spend'}</div>
                   </div>
-                  <div className="text-xs text-slate-400">{isCurrentMonth ? `Based on avg ${fmtD(avgDailySpend)}/day` : 'Final spend'}</div>
-                </div>
+                </>) : (<>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">This Month MTD</div>
+                    <div className="text-2xl font-bold text-white mb-1">{fmtD(totalSpend)}</div>
+                    <div className="text-xs text-slate-400">Day {daysElapsed} of month</div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Last Month (Day 1–{daysElapsed})</div>
+                    <div className="text-2xl font-bold text-white mb-1">{samePeriodLastMonth > 0 ? fmtD(samePeriodLastMonth) : loadingLastMonth ? '…' : '-'}</div>
+                    <div className={`text-xs font-semibold mt-0.5 ${trendDiff >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {samePeriodLastMonth > 0 ? `${trendDiff >= 0 ? '+' : ''}${fmtD(trendDiff)} (${trendPct.toFixed(1)}%)` : ''}
+                    </div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Last Month Total</div>
+                    <div className="text-2xl font-bold text-white mb-1">{lastMonthTotal > 0 ? fmtD(lastMonthTotal) : loadingLastMonth ? '…' : '-'}</div>
+                    <div className="text-xs text-slate-400">{lastMonthData?.summary?.startDate?.slice(0,7) || 'Prior month'}</div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Month-End Forecast</div>
+                    <div className={`text-2xl font-bold mb-1 ${trendVsLastMonth > 5 ? 'text-blue-400' : trendVsLastMonth < -5 ? 'text-yellow-400' : 'text-emerald-400'}`}>
+                      {fmtD(trendProjected)}
+                    </div>
+                    <div className="text-xs text-slate-400">{lastMonthTotal > 0 ? `${trendVsLastMonth >= 0 ? '+' : ''}${trendVsLastMonth.toFixed(1)}% vs last month` : `Avg ${fmtD(avgDailySpend)}/day`}</div>
+                  </div>
+                </>)}
               </div>
 
               {/* Pacing Status + Today vs Yesterday */}
               <div className="grid grid-cols-2 gap-4">
-                <div className={`rounded-xl p-6 border-2 ${sc.bg} ${sc.border}`}>
-                  <div className="flex items-center justify-between mb-4">
+                <div className={`rounded-xl p-6 border-2 ${
+                  dayPacingTrend === 'Trending Up' ? 'bg-blue-900/20 border-blue-700' :
+                  dayPacingTrend === 'Steady'      ? 'bg-emerald-900/20 border-emerald-700' :
+                                                     'bg-yellow-900/20 border-yellow-700'
+                }`}>
+                  <div className="flex items-start justify-between mb-3 gap-2">
                     <h3 className="text-sm font-bold text-white uppercase tracking-wide">Overall Pacing</h3>
-                    <span className={`text-xs font-bold px-3 py-1 rounded-full ${sc.badge}`}>{startDate} → {endDate}</span>
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-700 text-slate-300 whitespace-nowrap flex-shrink-0">{startDate} → {endDate}</span>
                   </div>
-                  <div className="flex items-center gap-4 mb-5">
-                    <StatusIcon className={`w-12 h-12 ${sc.text} flex-shrink-0`} />
+                  <div className="flex items-center gap-3 mb-4">
+                    {dayPacingTrend === 'Trending Up'
+                      ? <TrendingUp className="w-10 h-10 text-blue-400 flex-shrink-0" />
+                      : dayPacingTrend === 'Steady'
+                      ? <CheckCircle className="w-10 h-10 text-emerald-400 flex-shrink-0" />
+                      : <TrendingDown className="w-10 h-10 text-yellow-400 flex-shrink-0" />
+                    }
                     <div>
-                      <div className={`text-3xl font-bold ${sc.text}`}>{pacingStatus.label}</div>
-                      <div className="text-sm text-slate-400 mt-0.5">
-                        {idealSpendToDate > 0 ? `${fmt(pacingPct, 1)}% of ideal pacing` : 'Set a budget to track pacing'}
-                      </div>
+                      <div className={`text-2xl font-bold ${
+                        dayPacingTrend === 'Trending Up' ? 'text-blue-400' :
+                        dayPacingTrend === 'Steady'      ? 'text-emerald-400' : 'text-yellow-400'
+                      }`}>{dayPacingTrend}</div>
+                      <div className="text-xs text-slate-400 mt-0.5">vs {last5Days.length}-day avg · day {daysElapsed} of {totalDays}</div>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Latest day spend</span>
+                      <span className="text-white font-mono font-bold">{fmtD(latestDaySpend)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">{last5Days.length}-day avg</span>
+                      <span className="text-slate-300 font-mono">{fmtD(dayPacingAvg)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Difference</span>
+                      <span className={`font-mono font-bold ${dayPacingDiff >= 0 ? 'text-blue-400' : 'text-yellow-400'}`}>
+                        {dayPacingDiff >= 0 ? '+' : ''}{fmtD(dayPacingDiff)}
+                      </span>
                     </div>
                   </div>
                   {budgetUSD > 0 && (
-                    <div className="space-y-3">
-                      <div>
-                        <div className="flex justify-between text-xs mb-1">
-                          <span className="text-slate-400">Actual spend</span>
-                          <span className="text-white font-mono">{fmtD(totalSpend)}</span>
-                        </div>
-                        <div className="flex justify-between text-xs mb-2">
-                          <span className="text-slate-400">Ideal by day {daysElapsed}</span>
-                          <span className="text-slate-300 font-mono">{fmtD(idealSpendToDate)}</span>
-                        </div>
-                        <div className="h-3 bg-slate-700 rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full transition-all ${sc.bar}`} style={{ width: `${Math.min(budgetUsedPct, 100)}%` }} />
-                        </div>
-                        <div className="flex justify-between text-xs mt-1">
-                          <span className="text-slate-500">{fmtD(0)}</span>
-                          <span className="text-slate-400">{fmt(budgetUsedPct, 1)}% used</span>
-                          <span className="text-slate-500">{fmtD(budgetUSD)}</span>
-                        </div>
+                    <div className="mt-4 pt-3 border-t border-slate-700">
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-400">Target used</span>
+                        <span className="text-slate-300">{fmt(budgetUsedPct, 1)}% of {fmtD(budgetUSD)}</span>
                       </div>
-                      <div>
-                        <div className="flex justify-between text-xs mb-1">
-                          <span className="text-slate-400">Time elapsed</span>
-                          <span className="text-slate-300">Day {daysElapsed} / {totalDays}</span>
-                        </div>
-                        <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-                          <div className="h-full bg-slate-500 rounded-full" style={{ width: `${(daysElapsed / totalDays) * 100}%` }} />
-                        </div>
+                      <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full ${sc.bar}`} style={{ width: `${Math.min(budgetUsedPct, 100)}%` }} />
                       </div>
                     </div>
                   )}
                 </div>
 
                 <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wide mb-4">Today vs Yesterday</h3>
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wide mb-4">Yesterday vs Day Before</h3>
                   <div className={`flex items-center gap-3 mb-5 p-4 rounded-xl border ${
-                    improvedToday ? 'bg-emerald-900/30 border-emerald-600' : 'bg-red-900/20 border-red-700'
+                    yesterdaySpend >= dayBeforeYesterdaySpend ? 'bg-emerald-900/30 border-emerald-600' : 'bg-red-900/20 border-red-700'
                   }`}>
-                    {improvedToday
+                    {yesterdaySpend >= dayBeforeYesterdaySpend
                       ? <TrendingUp className="w-10 h-10 text-emerald-400 flex-shrink-0" />
                       : <TrendingDown className="w-10 h-10 text-red-400 flex-shrink-0" />
                     }
                     <div>
-                      <div className={`text-xl font-bold ${improvedToday ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {improvedToday ? 'Pacing Improved' : 'Pacing Declined'}
+                      <div className={`text-xl font-bold ${yesterdaySpend >= dayBeforeYesterdaySpend ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {yesterdaySpend >= dayBeforeYesterdaySpend ? 'Spend Up' : 'Spend Down'}
                       </div>
                       <div className="text-xs text-slate-400 mt-0.5">
-                        {idealDailySpend > 0
-                          ? `Today is ${Math.abs(todayDiffFromIdealPct).toFixed(1)}% ${todayDiffFromIdealPct >= 0 ? 'above' : 'below'} ideal`
-                          : 'Set a budget to see ideal pacing'}
+                        {dayBeforeYesterdaySpend > 0
+                          ? `${Math.abs(((yesterdaySpend - dayBeforeYesterdaySpend) / dayBeforeYesterdaySpend) * 100).toFixed(1)}% ${yesterdaySpend >= dayBeforeYesterdaySpend ? 'higher' : 'lower'} than day before`
+                          : 'No data for day before yesterday'}
                       </div>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-slate-700/60 rounded-lg p-4">
-                      <div className="text-xs text-slate-400 mb-1 font-medium">Today</div>
-                      <div className="text-2xl font-bold text-white">{fmtD(todaySpend)}</div>
-                      {idealDailySpend > 0 && (
-                        <div className={`text-xs mt-1 font-medium flex items-center gap-1 ${
-                          Math.abs(todayDiffFromIdealPct) <= 10 ? 'text-emerald-400' :
-                          todaySpend < idealDailySpend ? 'text-yellow-400' : 'text-red-400'
-                        }`}>
-                          {Math.abs(todayDiffFromIdealPct) <= 10 ? <CheckCircle className="w-3 h-3" /> :
-                            todaySpend < idealDailySpend ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
-                          Ideal: {fmtD(idealDailySpend)}
-                        </div>
-                      )}
+                      <div className="text-xs text-slate-400 mb-2 font-medium leading-tight min-h-[2rem]">Yesterday</div>
+                      <div className="text-xl font-bold text-white truncate">{fmtD(yesterdaySpend)}</div>
                     </div>
                     <div className="bg-slate-700/60 rounded-lg p-4">
-                      <div className="text-xs text-slate-400 mb-1 font-medium">Yesterday</div>
-                      <div className="text-2xl font-bold text-white">{fmtD(yesterdaySpend)}</div>
-                      {yesterdaySpend > 0 && (
-                        <div className={`text-xs mt-1 font-medium flex items-center gap-1 ${todaySpend >= yesterdaySpend ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {todaySpend >= yesterdaySpend
-                            ? <><ChevronUp className="w-3 h-3" /> +{fmtD(todaySpend - yesterdaySpend)} today</>
-                            : <><ChevronDown className="w-3 h-3" /> -{fmtD(yesterdaySpend - todaySpend)} today</>}
-                        </div>
-                      )}
+                      <div className="text-xs text-slate-400 mb-2 font-medium leading-tight min-h-[2rem]">Day Before</div>
+                      <div className="text-xl font-bold text-white truncate">{fmtD(dayBeforeYesterdaySpend)}</div>
                     </div>
                   </div>
-                  {budgetUSD > 0 && isCurrentMonth && (
-                    <div className="mt-4 pt-4 border-t border-slate-700 space-y-1">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-slate-400">Needed per day to hit budget</span>
-                        <span className="text-white font-bold font-mono">{fmtD(neededDailyToHitBudget)}</span>
-                      </div>
-                      <div className="flex justify-between text-xs">
-                        <span className="text-slate-400">Original daily target</span>
-                        <span className="text-slate-300 font-mono">{fmtD(idealDailySpend)}</span>
-                      </div>
+                  {dayBeforeYesterdaySpend > 0 && (
+                    <div className={`mt-3 text-xs font-medium flex items-center gap-1 ${yesterdaySpend >= dayBeforeYesterdaySpend ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {yesterdaySpend >= dayBeforeYesterdaySpend
+                        ? <><ChevronUp className="w-3 h-3" /> +{fmtD(yesterdaySpend - dayBeforeYesterdaySpend)} vs day before</>
+                        : <><ChevronDown className="w-3 h-3" /> -{fmtD(dayBeforeYesterdaySpend - yesterdaySpend)} vs day before</>}
                     </div>
                   )}
                 </div>
@@ -1711,7 +2033,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
 
                     {compareMode && compareSelected.length >= 2 ? (
                       <ComparisonTable
-                        accounts={accounts.filter(a => selectedAccounts.includes(a.id))}
+                        accounts={accounts.filter(a => selectedAccounts.includes(a.id) && !excludedAccounts.includes(a.id))}
                         accountTotals={pacingData?.accountTotals}
                         selectedIds={compareSelected}
                       />
@@ -1719,116 +2041,21 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                       clientRows.length === 0 ? (
                         <p className="text-slate-500 text-sm text-center py-6">No client data available</p>
                       ) : (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="border-b border-slate-700">
-                                {compareMode
-                                  ? ['☑', 'Client', 'Spend', 'Impressions', 'CTR', 'CPM', 'CPC'].map(h => (
-                                      <th key={h} className={`pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide ${h === '☑' ? 'text-center w-8' : h === 'Client' ? 'text-left' : 'text-right'}`}>{h}</th>
-                                    ))
-                                  : ['#', 'Client', 'Today', 'Yesterday', 'Total', 'Impressions', 'CTR', 'CPC', '% Target', 'Trend'].map(h => (
-                                      <th key={h} className={`pb-3 text-xs text-slate-400 font-semibold uppercase tracking-wide ${
-                                        h === '#' ? 'text-center w-8' :
-                                        h === 'Client' ? 'text-left' :
-                                        h === 'Trend' ? 'text-center' : 'text-right'
-                                      }`}>{h}</th>
-                                    ))
-                                }
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {clientRows.map((client, i) => (
-                                <tr key={client.id}
-                                  className={`border-b border-slate-700/50 ${i % 2 !== 0 ? 'bg-slate-700/20' : ''} ${!compareMode ? 'hover:bg-slate-700/40 cursor-pointer' : ''}`}
-                                  onClick={!compareMode ? () => setDrillAccount(client) : undefined}>
-                                  {compareMode ? (
-                                    <>
-                                      <td className="py-3 text-center">
-                                        <input type="checkbox"
-                                          checked={compareSelected.includes(client.id)}
-                                          onChange={e => {
-                                            e.stopPropagation();
-                                            setCompareSelected(prev =>
-                                              prev.includes(client.id)
-                                                ? prev.filter(x => x !== client.id)
-                                                : prev.length < 5 ? [...prev, client.id] : prev
-                                            );
-                                          }}
-                                          className="w-4 h-4 accent-purple-500" />
-                                      </td>
-                                      <td className="py-3">
-                                        <div className="font-semibold text-white text-xs">{client.name}</div>
-                                        <div className="text-xs text-slate-500 font-mono">ID: {client.id}</div>
-                                      </td>
-                                      <td className="py-3 text-right font-mono text-white text-xs">{fmtD(client.totalSpend)}</td>
-                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">{client.totalImpressions.toLocaleString()}</td>
-                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">{client.ctr.toFixed(2)}%</td>
-                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">${client.cpm.toFixed(2)}</td>
-                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">${client.cpc.toFixed(2)}</td>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <td className="py-3 text-center">
-                                        <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold ${
-                                          i === 0 ? 'bg-yellow-500 text-yellow-900' :
-                                          i === 1 ? 'bg-slate-400 text-slate-900' :
-                                          i === 2 ? 'bg-amber-700 text-amber-100' :
-                                          'bg-slate-700 text-slate-400'
-                                        }`}>{i + 1}</span>
-                                      </td>
-                                      <td className="py-3">
-                                        <div className="font-semibold text-white text-xs hover:text-blue-300">{client.name}</div>
-                                        <div className="text-xs text-slate-500 font-mono">ID: {client.id}</div>
-                                      </td>
-                                      <td className="py-3 text-right font-mono text-white text-xs">{fmtD(client.todaySpend)}</td>
-                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">{fmtD(client.yesterdaySpend)}</td>
-                                      <td className="py-3 text-right font-bold text-white text-xs">{fmtD(client.totalSpend)}</td>
-                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">{client.totalImpressions.toLocaleString()}</td>
-                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">{client.ctr.toFixed(2)}%</td>
-                                      <td className="py-3 text-right font-mono text-slate-300 text-xs">${client.cpc.toFixed(2)}</td>
-                                      <td className="py-3 text-right text-xs">
-                                        {budgetUSD > 0
-                                          ? <span className={`font-bold ${client.pct > 100 ? 'text-red-400' : client.pct > 75 ? 'text-yellow-400' : 'text-emerald-400'}`}>{fmt(client.pct, 1)}%</span>
-                                          : <span className="text-slate-500">-</span>}
-                                      </td>
-                                      <td className="py-3 text-center">
-                                        {client.improved
-                                          ? <div className="flex items-center justify-center gap-1 text-emerald-400 text-xs font-medium"><TrendingUp className="w-3.5 h-3.5" /> Up</div>
-                                          : <div className="flex items-center justify-center gap-1 text-red-400 text-xs font-medium"><TrendingDown className="w-3.5 h-3.5" /> Down</div>}
-                                      </td>
-                                    </>
-                                  )}
-                                </tr>
-                              ))}
-                            </tbody>
-                            {!compareMode && clientRows.length > 1 && (
-                              <tfoot>
-                                <tr className="bg-slate-700/40">
-                                  <td className="py-3"></td>
-                                  <td className="py-3 font-bold text-white text-xs uppercase">Total</td>
-                                  <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtD(clientRows.reduce((s, r) => s + r.todaySpend, 0))}</td>
-                                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{fmtD(clientRows.reduce((s, r) => s + r.yesterdaySpend, 0))}</td>
-                                  <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtD(totalSpend)}</td>
-                                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{totalImpressions.toLocaleString()}</td>
-                                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{calcCTR(totalClicks, totalImpressions).toFixed(2)}%</td>
-                                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">${calcCPC(totalSpend, totalClicks).toFixed(2)}</td>
-                                  <td className="py-3 text-right font-bold text-xs">
-                                    {budgetUSD > 0
-                                      ? <span className={`${budgetUsedPct > 100 ? 'text-red-400' : budgetUsedPct > 75 ? 'text-yellow-400' : 'text-emerald-400'}`}>{fmt(budgetUsedPct, 1)}%</span>
-                                      : <span className="text-slate-500">-</span>}
-                                  </td>
-                                  <td></td>
-                                </tr>
-                              </tfoot>
-                            )}
-                          </table>
-                          {!compareMode && (
-                            <p className="text-xs text-slate-600 mt-3">Click any row to drill into that account</p>
-                          )}
-                          {compareMode && compareSelected.length < 2 && (
-                            <p className="text-xs text-slate-500 mt-3 text-center">Select 2–5 accounts to compare side-by-side</p>
-                          )}
+                        <div className="space-y-8">
+                          <div>
+                            <div className="flex items-center gap-2 mb-3">
+                              <span className="text-xs font-bold text-yellow-400 uppercase tracking-wide px-2 py-1 rounded bg-yellow-900/30 border border-yellow-700">ZAR Accounts</span>
+                              <span className="text-xs text-slate-500">{zarClientRows.length} client{zarClientRows.length !== 1 ? 's' : ''}</span>
+                            </div>
+                            <ClientTable rows={zarClientRows} currencySymbol="R" fmtCur={fmtR} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 mb-3">
+                              <span className="text-xs font-bold text-emerald-400 uppercase tracking-wide px-2 py-1 rounded bg-emerald-900/30 border border-emerald-700">USD Accounts</span>
+                              <span className="text-xs text-slate-500">{usdClientRows.length} client{usdClientRows.length !== 1 ? 's' : ''}</span>
+                            </div>
+                            <ClientTable rows={usdClientRows} currencySymbol="$" fmtCur={fmtD} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} />
+                          </div>
                         </div>
                       )
                     )}
