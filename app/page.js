@@ -2072,7 +2072,8 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                       )
                     )}
                   </div>
-                </>                  {/* Daily Spend Block */}
+
+                  {/* Daily Spend Block */}
                   {pacingData?.dailyData?.length > 0 && (
                     <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
                       <div className="flex items-center justify-between mb-4">
@@ -2123,7 +2124,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                       </div>
                     </div>
                   )}
-
+                </>
 
               )}
             </>
