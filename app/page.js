@@ -1818,9 +1818,13 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Last Month Total</div>
                     <div className="text-2xl font-bold text-white mb-1">{lastMonthTotal > 0 ? fmtD(lastMonthTotal) : loadingLastMonth ? '…' : '-'}</div>
                     <div className="text-xs text-slate-400">
-                      {lastMonthData?.summary?.startDate && lastMonthData?.summary?.endDate
-                        ? `${lastMonthData.summary.startDate} → ${lastMonthData.summary.endDate}`
-                        : 'Prior month'}
+                      {(() => {
+                        const now = new Date();
+                        const y = now.getFullYear(), m = now.getMonth();
+                        const firstDay = `${y}-${String(m).padStart(2,'0')}-01`;
+                        const lastDay  = new Date(y, m, 0).toISOString().split('T')[0];
+                        return lastMonthData ? `${firstDay} → ${lastDay}` : 'Prior month';
+                      })()}
                     </div>
                   </div>
                   <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
