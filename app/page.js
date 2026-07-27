@@ -1607,6 +1607,13 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                 <div className="text-xs text-slate-500 mt-1">From: {startDate}</div>
               </div>
               <div>
+                <label className="text-xs text-slate-500 block mb-1">Start Date <span className="text-slate-600">(optional custom)</span></label>
+                <input type="date" value={startDate}
+                  max={endDate}
+                  onChange={e => setStartDate(e.target.value)}
+                  className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
+              </div>
+              <div>
                 <label className="text-xs text-slate-500 block mb-1">End Date</label>
                 <input type="date" value={endDate}
                   min={startDate}
