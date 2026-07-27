@@ -69,15 +69,16 @@ function firstOfMonth() {
 
 // ── FilterSection ─────────────────────────────────────────────────────────────
 // ── ClientTable ───────────────────────────────────────────────────────────────
-function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClick }) {
+function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClick, daysElapsed, lastMonthDays }) {
   const [search, setSearch] = React.useState('');
   const filtered = !search ? rows
     : rows.filter(r => r.name.toLowerCase().includes(search.toLowerCase()) || String(r.id).includes(search));
-  const totalToday     = filtered.reduce((s, r) => s + r.todaySpend, 0);
-  const totalYesterday = filtered.reduce((s, r) => s + r.yesterdaySpend, 0);
-  const totalSpend     = filtered.reduce((s, r) => s + r.totalSpend, 0);
-  const totalImp       = filtered.reduce((s, r) => s + (r.totalImpressions || 0), 0);
-  const totalClk       = filtered.reduce((s, r) => s + (r.totalClicks || 0), 0);
+  const de = daysElapsed || 1;
+  const lmd = lastMonthDays || 30;
+  const totalThisMonth  = filtered.reduce((s, r) => s + r.totalSpend, 0);
+  const totalLastMonth  = filtered.reduce((s, r) => s + (r.lastMonthSpend || 0), 0);
+  const totalAvgThis    = de > 0 ? totalThisMonth / de : 0;
+  const totalAvgLast    = lmd > 0 ? totalLastMonth / lmd : 0;
   return (
     <div>
       {rows.length > 0 && (
@@ -106,31 +107,48 @@ function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClic
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-700">
-                {['Client', 'Account ID', "Today's Spend", "Yesterday's Spend", 'Total', 'Impressions', 'CTR', 'CPC'].map(h => (
-                  <th key={h} className={`pb-3 text-xs text-slate-400 font-bold uppercase tracking-wide ${h === 'Client' || h === 'Account ID' ? 'text-left' : 'text-right'}`}>{h}</th>
+                {['Client', 'Account ID', 'This Month', 'Last Month', 'Avg Daily (This Mo.)', 'Avg Daily (Last Mo.)'].map(h => (
+                  <th key={h} className={`pb-3 text-xs text-slate-400 font-bold uppercase tracking-wide ${['Client','Account ID'].includes(h) ? 'text-left' : 'text-right'}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filtered.map((client, i) => (
-                <tr key={client.id}
-                  className={`border-b border-slate-700/50 ${client.isNewSpender ? 'bg-red-900/20 hover:bg-red-900/30' : i % 2 !== 0 ? 'bg-slate-700/20 hover:bg-slate-700/40' : 'hover:bg-slate-700/40'} cursor-pointer`}
-                  onClick={() => onRowClick(client)}>
-                  <td className="py-2.5 pr-4 max-w-xs">
-                    <div className="flex items-center gap-1.5">
-                      {client.isNewSpender && <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" title="Spent this month, no spend last month" />}
-                      <div className={`font-semibold text-xs truncate hover:text-blue-300 ${client.isNewSpender ? 'text-red-300' : 'text-white'}`}>{client.name}</div>
-                    </div>
-                  </td>
-                  <td className="py-2.5 pr-4"><div className="text-xs text-slate-400 font-mono">{client.id}</div></td>
-                  <td className="py-2.5 text-right font-mono text-white text-xs">{fmtCur(client.todaySpend)}</td>
-                  <td className="py-2.5 text-right font-mono text-slate-300 text-xs">{fmtCur(client.yesterdaySpend)}</td>
-                  <td className="py-2.5 text-right font-bold text-white text-xs">{fmtCur(client.totalSpend)}</td>
-                  <td className="py-2.5 text-right font-mono text-slate-300 text-xs">{(client.totalImpressions||0).toLocaleString()}</td>
-                  <td className="py-2.5 text-right font-mono text-slate-300 text-xs">{client.ctr.toFixed(2)}%</td>
-                  <td className="py-2.5 text-right font-mono text-slate-300 text-xs">{currencySymbol}{client.cpc.toFixed(2)}</td>
-                </tr>
-              ))}
+              {filtered.map((client, i) => {
+                const avgThis = de > 0 ? client.totalSpend / de : 0;
+                const avgLast = lmd > 0 ? (client.lastMonthSpend || 0) / lmd : 0;
+                const vsLast  = client.lastMonthSpend > 0
+                  ? ((client.totalSpend - client.lastMonthSpend) / client.lastMonthSpend) * 100 : null;
+                return (
+                  <tr key={client.id}
+                    className={`border-b border-slate-700/50 ${client.isNewSpender ? 'bg-red-900/20 hover:bg-red-900/30' : i % 2 !== 0 ? 'bg-slate-700/20 hover:bg-slate-700/40' : 'hover:bg-slate-700/40'} cursor-pointer`}
+                    onClick={() => onRowClick(client)}>
+                    <td className="py-2.5 pr-4 max-w-xs">
+                      <div className="flex items-center gap-1.5">
+                        {client.isNewSpender && <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" title="New spender this month" />}
+                        <div className={`font-semibold text-xs truncate hover:text-blue-300 ${client.isNewSpender ? 'text-red-300' : 'text-white'}`}>{client.name}</div>
+                      </div>
+                    </td>
+                    <td className="py-2.5 pr-4"><div className="text-xs text-slate-400 font-mono">{client.id}</div></td>
+                    <td className="py-2.5 text-right text-xs">
+                      <div className="font-bold text-white font-mono">{fmtCur(client.totalSpend)}</div>
+                      {vsLast !== null && (
+                        <div className={`text-xs font-mono ${vsLast >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {vsLast >= 0 ? '+' : ''}{vsLast.toFixed(1)}% vs LM
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-2.5 text-right font-mono text-slate-300 text-xs">
+                      {client.lastMonthSpend > 0 ? fmtCur(client.lastMonthSpend) : <span className="text-slate-600">—</span>}
+                    </td>
+                    <td className={`py-2.5 text-right font-mono text-xs font-semibold ${avgThis >= avgLast && avgLast > 0 ? 'text-emerald-400' : avgLast > 0 ? 'text-yellow-400' : 'text-white'}`}>
+                      {fmtCur(avgThis)}
+                    </td>
+                    <td className="py-2.5 text-right font-mono text-slate-400 text-xs">
+                      {avgLast > 0 ? fmtCur(avgLast) : <span className="text-slate-600">—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
             {filtered.length > 1 && (
               <tfoot>
@@ -138,12 +156,10 @@ function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClic
                   <td className="py-3 font-bold text-white text-xs uppercase" colSpan={2}>
                     Total{search ? ` (${filtered.length} of ${rows.length})` : ''}
                   </td>
-                  <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtCur(totalToday)}</td>
-                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{fmtCur(totalYesterday)}</td>
-                  <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtCur(totalSpend)}</td>
-                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{totalImp.toLocaleString()}</td>
-                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{calcCTR(totalClk, totalImp).toFixed(2)}%</td>
-                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{currencySymbol}{calcCPC(totalSpend, totalClk).toFixed(2)}</td>
+                  <td className="py-3 text-right font-bold text-white font-mono text-xs">{fmtCur(totalThisMonth)}</td>
+                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{totalLastMonth > 0 ? fmtCur(totalLastMonth) : '—'}</td>
+                  <td className={`py-3 text-right font-bold font-mono text-xs ${totalAvgThis >= totalAvgLast && totalAvgLast > 0 ? 'text-emerald-400' : 'text-white'}`}>{fmtCur(totalAvgThis)}</td>
+                  <td className="py-3 text-right font-bold text-slate-300 font-mono text-xs">{totalAvgLast > 0 ? fmtCur(totalAvgLast) : '—'}</td>
                 </tr>
               </tfoot>
             )}
@@ -2091,14 +2107,14 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                               <span className="text-xs font-bold text-yellow-400 uppercase tracking-wide px-2 py-1 rounded bg-yellow-900/30 border border-yellow-700">ZAR Accounts</span>
                               <span className="text-xs text-slate-500">{zarClientRows.length} client{zarClientRows.length !== 1 ? 's' : ''}</span>
                             </div>
-                            <ClientTable rows={zarClientRows} currencySymbol="R" fmtCur={fmtR} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} />
+                            <ClientTable rows={zarClientRows} currencySymbol="R" fmtCur={fmtR} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={daysElapsed} lastMonthDays={lastMonthDays} />
                           </div>
                           <div>
                             <div className="flex items-center gap-2 mb-3">
                               <span className="text-xs font-bold text-emerald-400 uppercase tracking-wide px-2 py-1 rounded bg-emerald-900/30 border border-emerald-700">USD Accounts</span>
                               <span className="text-xs text-slate-500">{usdClientRows.length} client{usdClientRows.length !== 1 ? 's' : ''}</span>
                             </div>
-                            <ClientTable rows={usdClientRows} currencySymbol="$" fmtCur={fmtD} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} />
+                            <ClientTable rows={usdClientRows} currencySymbol="$" fmtCur={fmtD} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={daysElapsed} lastMonthDays={lastMonthDays} />
                           </div>
                         </div>
                       )
