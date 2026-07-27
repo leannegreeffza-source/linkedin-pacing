@@ -1544,16 +1544,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                   className="flex items-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium transition-colors">
                   <FileSpreadsheet className="w-4 h-4" /> Excel
                 </button>
-                <button
-                  onClick={() => exportToPDF(clientRows, pacingData?.dailyData || [], startDate, endDate, totalSpend, budgetUSD, pacingStatus.label)}
-                  className="flex items-center gap-1.5 px-3 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition-colors">
-                  <FileText className="w-4 h-4" /> PDF
-                </button>
-                <button
-                  onClick={generateAIReport}
-                  className="flex items-center gap-1.5 px-3 py-2 bg-purple-700 hover:bg-purple-600 text-white rounded-lg text-sm font-medium transition-colors">
-                  <Sparkles className="w-4 h-4" /> AI Report
-                </button>
+
               </div>
             )}
 
