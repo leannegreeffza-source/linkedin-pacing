@@ -994,6 +994,8 @@ export default function PacingDashboard() {
   const [showPeriodCompare, setShowPeriodCompare] = useState(false);
   const [prevPacingData, setPrevPacingData] = useState(null);
   const [loadingPrev, setLoadingPrev] = useState(false);
+  const [compareStart, setCompareStart] = useState('');
+  const [compareEnd,   setCompareEnd]   = useState('');
 
   const now = new Date();
 
@@ -1204,18 +1206,31 @@ export default function PacingDashboard() {
     }
   }, [selectedAccounts]);
 
-  async function loadPrevPeriod() {
+  async function loadPrevPeriod(customStart, customEnd) {
     const zarIds = new Set(accounts.filter(a => detectCurrency(a) === 'ZAR').map(a => String(a.id)));
     const usdOnlyIds = selectedAccounts.filter(id => !zarIds.has(String(id)));
     if (usdOnlyIds.length === 0) return;
     setLoadingPrev(true);
     try {
-      const start = new Date(startDate + 'T00:00:00');
-      const end   = new Date(endDate   + 'T00:00:00');
-      const spanDays = Math.round((end - start) / (1000*60*60*24));
-      const prevEnd   = new Date(start); prevEnd.setDate(prevEnd.getDate() - 1);
-      const prevStart = new Date(prevEnd); prevStart.setDate(prevStart.getDate() - spanDays);
-      const body = { accountIds: usdOnlyIds, startDate: prevStart.toISOString().split('T')[0], endDate: prevEnd.toISOString().split('T')[0] };
+      let psDate, peDate;
+      if (customStart && customEnd) {
+        // Use custom dates directly
+        psDate = customStart;
+        peDate = customEnd;
+      } else {
+        // Auto-calculate: same span as current period, immediately before it
+        const start = new Date(startDate + 'T00:00:00');
+        const end   = new Date(endDate   + 'T00:00:00');
+        const spanDays = Math.round((end - start) / (1000*60*60*24));
+        const prevEnd   = new Date(start); prevEnd.setDate(prevEnd.getDate() - 1);
+        const prevStart = new Date(prevEnd); prevStart.setDate(prevStart.getDate() - spanDays);
+        psDate = prevStart.toISOString().split('T')[0];
+        peDate = prevEnd.toISOString().split('T')[0];
+        // Store computed dates so inputs show them
+        setCompareStart(psDate);
+        setCompareEnd(peDate);
+      }
+      const body = { accountIds: usdOnlyIds, startDate: psDate, endDate: peDate };
       const res = await fetch(`${apiPrefix}/pacing`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (res.ok) setPrevPacingData(await res.json());
     } catch (err) { console.error(err); }
@@ -2001,19 +2016,29 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                   <Calendar className="w-3.5 h-3.5" />
                   {showPeriodCompare ? 'Hide Comparison' : 'Compare to Previous Period'}
                 </button>
-                {showPeriodCompare && loadingPrev && (
-                  <span className="text-xs text-slate-400 flex items-center gap-1">
-                    <RefreshCw className="w-3 h-3 animate-spin" /> Loading prev period…
-                  </span>
-                )}
-                {showPeriodCompare && prevPacingData && !loadingPrev && (
-                  <span className="text-xs text-slate-400">
-                    vs {prevPacingData.summary?.startDate} → {prevPacingData.summary?.endDate}
-                  </span>
+                {showPeriodCompare && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-slate-400">vs</span>
+                    <input type="date" value={compareStart}
+                      onChange={e => setCompareStart(e.target.value)}
+                      className="px-2 py-1 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
+                    <span className="text-xs text-slate-500">→</span>
+                    <input type="date" value={compareEnd}
+                      max={startDate}
+                      onChange={e => setCompareEnd(e.target.value)}
+                      className="px-2 py-1 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
+                    <button
+                      onClick={() => { if (compareStart && compareEnd) loadPrevPeriod(compareStart, compareEnd); }}
+                      disabled={!compareStart || !compareEnd || loadingPrev}
+                      className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs rounded-lg font-semibold transition-colors flex items-center gap-1">
+                      {loadingPrev ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
+                      {loadingPrev ? 'Loading…' : 'Apply'}
+                    </button>
+                  </div>
                 )}
 
-                {/* Compare mode toggle */}
-                <div className="ml-auto flex items-center gap-2">
+                {/* Compare mode toggle + account picker */}
+                <div className="ml-auto flex items-center gap-2 flex-wrap">
                   <button
                     onClick={() => { setCompareMode(m => !m); setCompareSelected([]); setDrillAccount(null); }}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
@@ -2022,8 +2047,56 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                     <Users className="w-3.5 h-3.5" />
                     {compareMode ? 'Exit Compare Mode' : 'Compare Accounts'}
                   </button>
-                  {compareMode && compareSelected.length > 0 && (
-                    <span className="text-xs text-purple-300">{compareSelected.length} selected</span>
+                  {compareMode && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* Account A picker */}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-purple-300 font-semibold">A:</span>
+                        <select
+                          value={compareSelected[0] || ''}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setCompareSelected(prev => [val, prev[1] || ''].filter(Boolean));
+                          }}
+                          className="px-2 py-1 bg-slate-700 border border-purple-600 rounded-lg text-xs text-white focus:outline-none focus:border-purple-400 max-w-[200px]">
+                          <option value="">Select account A…</option>
+                          {clientRows.map(c => (
+                            <option key={c.id} value={c.id} disabled={c.id === compareSelected[1]}>
+                              {c.name.length > 30 ? c.name.slice(0,30)+'…' : c.name} ({c.id})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {/* Account B picker */}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-purple-300 font-semibold">B:</span>
+                        <select
+                          value={compareSelected[1] || ''}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setCompareSelected(prev => [prev[0] || '', val].filter(Boolean));
+                          }}
+                          className="px-2 py-1 bg-slate-700 border border-purple-600 rounded-lg text-xs text-white focus:outline-none focus:border-purple-400 max-w-[200px]">
+                          <option value="">Select account B…</option>
+                          {clientRows.map(c => (
+                            <option key={c.id} value={c.id} disabled={c.id === compareSelected[0]}>
+                              {c.name.length > 30 ? c.name.slice(0,30)+'…' : c.name} ({c.id})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {compareSelected.length >= 2 && (
+                        <span className="text-xs text-purple-300 bg-purple-900/40 px-2 py-1 rounded-lg">
+                          {compareSelected.length} selected
+                        </span>
+                      )}
+                      {compareSelected.length > 0 && (
+                        <button onClick={() => setCompareSelected([])}
+                          className="text-slate-500 hover:text-red-400 text-xs px-1">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
