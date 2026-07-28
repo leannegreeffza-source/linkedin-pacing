@@ -1304,8 +1304,11 @@ export default function PacingDashboard() {
   // Remaining budget = full month budget minus all spend so far this month
   const remainingBudget = budgetUSD > 0 ? Math.max(0, budgetUSD - totalSpend) : 0;
 
-  // Avg daily spend based on days that have data
-  const avgDailySpend = daysElapsed > 1 ? totalSpend / (daysElapsed - 1) : todaySpend;
+  // Avg daily spend = spend up to yesterday ÷ days elapsed (excluding today)
+  // Formula: (totalSpend - todaySpend) / (daysElapsed - 1)
+  const spendToYesterday = Math.max(0, totalSpend - todaySpend);
+  const daysToYesterday  = Math.max(1, daysElapsed - 1);
+  const avgDailySpend    = spendToYesterday > 0 ? spendToYesterday / daysToYesterday : todaySpend;
 
   // Day-by-day pacing — always available, never depends on a target being set.
   const completedDays = (pacingData?.dailyData || []).filter(d => d.date < todayStr());
@@ -1319,9 +1322,10 @@ export default function PacingDashboard() {
   const dayPacingTrend = dayPacingPct >= 95 && dayPacingPct <= 105 ? 'Steady'
     : dayPacingPct > 105 ? 'Trending Up' : 'Trending Down';
 
-  // Projected end-of-month total = spend so far + avg daily * days left in month
+  // Month-End Forecast = (spend up to yesterday / days passed) × total days in month
+  // i.e. daily average × full month
   const projectedMonthTotal = isCurrentMonth
-    ? totalSpend + avgDailySpend * daysRemainingInMonth
+    ? avgDailySpend * daysInBudgetMonth
     : totalSpend;
 
   // Needed per day from today to hit the full month budget
@@ -1346,7 +1350,7 @@ export default function PacingDashboard() {
     : trendPct >= 95 && trendPct <= 105 ? { label: 'On Par', color: 'emerald' }
     : trendPct > 105 ? { label: 'Ahead of Last Month', color: 'blue' }
     : { label: 'Behind Last Month', color: 'yellow' };
-  const trendProjected = totalSpend + avgDailySpend * daysRemainingInMonth;
+  const trendProjected = isCurrentMonth ? avgDailySpend * daysInBudgetMonth : totalSpend;
   const trendVsLastMonth = lastMonthTotal > 0 ? ((trendProjected - lastMonthTotal) / lastMonthTotal) * 100 : 0;
 
   const activeAccountCount = selectedAccounts.length;
