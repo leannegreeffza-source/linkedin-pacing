@@ -1435,7 +1435,14 @@ export default function PacingDashboard() {
 
   const lastMonthTotal = lastMonthData?.summary?.totalSpend || 0;
   const lastMonthDays = lastMonthData ? (() => { const s = new Date(lastMonthData.summary?.startDate+'T00:00:00'); const e = new Date(lastMonthData.summary?.endDate+'T00:00:00'); return Math.round((e-s)/(1000*60*60*24))+1; })() : 30;
-  const samePeriodLastMonth = (lastMonthTotal / lastMonthDays) * daysElapsed;
+  // Use the ACTUAL summed spend for days 1..daysElapsed of last month (not a prorated
+  // average), so this figure reconciles with real per-day totals elsewhere in the app.
+  const samePeriodLastMonth = (() => {
+    const dd = lastMonthData?.dailyData;
+    if (!dd || dd.length === 0) return 0;
+    const sorted = [...dd].sort((a, b) => a.date.localeCompare(b.date));
+    return sorted.slice(0, daysElapsed).reduce((s, d) => s + (d.spend || 0), 0);
+  })();
   const trendPct = samePeriodLastMonth > 0 ? (totalSpend / samePeriodLastMonth) * 100 : 0;
   const trendDiff = totalSpend - samePeriodLastMonth;
   const trendStatus = samePeriodLastMonth === 0 ? { label: 'No Prior Data', color: 'slate' }
@@ -1901,7 +1908,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
           ) : (
             <>
               {/* Summary Cards — mode-aware */}
-              <div className="grid grid-cols-5 gap-4">
+              <div className={`grid gap-4 ${pacingMode === 'target' ? 'grid-cols-5' : 'grid-cols-4'}`}>
                 {pacingMode === 'target' ? (<>
                   <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Target</div>
@@ -1946,13 +1953,6 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">This Month MTD</div>
                     <div className="text-2xl font-bold text-white mb-1">{fmtD(totalSpend)}</div>
                     <div className="text-xs text-slate-400">Day {daysElapsed} of month</div>
-                  </div>
-                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
-                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Last Month (Day 1–{daysElapsed})</div>
-                    <div className="text-2xl font-bold text-white mb-1">{samePeriodLastMonth > 0 ? fmtD(samePeriodLastMonth) : loadingLastMonth ? '…' : '-'}</div>
-                    <div className={`text-xs font-semibold mt-0.5 ${trendDiff >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {samePeriodLastMonth > 0 ? `${trendDiff >= 0 ? '+' : ''}${fmtD(trendDiff)} (${trendPct.toFixed(1)}%)` : ''}
-                    </div>
                   </div>
                   <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Last Month Total</div>
@@ -2237,6 +2237,15 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                         No spend data for this period
                       </div>
                     )}
+                  </div>
+
+                  {/* Last Month (Day 1-X) — moved here, directly above Account Comparison / Client Breakdown */}
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700 max-w-xs">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Last Month (Day 1–{daysElapsed})</div>
+                    <div className="text-2xl font-bold text-white mb-1">{samePeriodLastMonth > 0 ? fmtD(samePeriodLastMonth) : loadingLastMonth ? '…' : '-'}</div>
+                    <div className={`text-xs font-semibold mt-0.5 ${trendDiff >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {samePeriodLastMonth > 0 ? `${trendDiff >= 0 ? '+' : ''}${fmtD(trendDiff)} (${trendPct.toFixed(1)}%)` : ''}
+                    </div>
                   </div>
 
                   {/* Client Breakdown — with compare mode + drill-down */}
