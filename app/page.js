@@ -171,6 +171,63 @@ function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClic
   );
 }
 
+// ── Searchable account combobox for Compare Accounts ────────────────────────
+function AccountComboBox({ label, options, value, excluded, onChange }) {
+  const [query, setQuery] = React.useState('');
+  const [open, setOpen]   = React.useState(false);
+  const ref = React.useRef();
+
+  // Close on outside click
+  React.useEffect(() => {
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  const selected = options.find(c => c.id === value);
+  const filtered = options.filter(c =>
+    c.id !== excluded &&
+    (!query || c.name.toLowerCase().includes(query.toLowerCase()) || c.id.includes(query))
+  );
+
+  return (
+    <div className="flex items-center gap-1.5" ref={ref}>
+      <span className="text-xs text-purple-300 font-semibold">{label}:</span>
+      <div className="relative">
+        <input
+          type="text"
+          value={open ? query : (selected ? `${selected.name.slice(0,25)} (${selected.id})` : '')}
+          onChange={e => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => { setQuery(''); setOpen(true); }}
+          placeholder={`Search account ${label}…`}
+          className="w-56 px-2 py-1 bg-slate-700 border border-purple-600 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-400"
+        />
+        {open && (
+          <div className="absolute top-full left-0 mt-1 w-72 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl z-50 max-h-52 overflow-y-auto">
+            {filtered.length === 0
+              ? <div className="px-3 py-2 text-xs text-slate-500 italic">No accounts found</div>
+              : filtered.map(c => (
+                <div key={c.id}
+                  onMouseDown={() => { onChange(c.id); setQuery(''); setOpen(false); }}
+                  className={`px-3 py-2 text-xs cursor-pointer hover:bg-purple-700/40 flex items-center justify-between gap-2 ${c.id === value ? 'bg-purple-900/40 text-purple-200' : 'text-white'}`}>
+                  <span className="truncate">{c.name}</span>
+                  <span className="text-slate-500 font-mono shrink-0">{c.id}</span>
+                </div>
+              ))
+            }
+          </div>
+        )}
+      </div>
+      {value && (
+        <button onClick={() => { onChange(''); setQuery(''); }}
+          className="text-slate-500 hover:text-red-400">
+          <X className="w-3 h-3" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function FilterSection({ title, icon: Icon, items, selectedIds, onToggle, loading,
   searchValue, onSearchChange, onSelectFiltered, onDeselectFiltered,
   excludedIds, onToggleExclude, onUploadExclusion, onClearExclusion, uploadingExcl, uploadedCount,
@@ -1314,10 +1371,11 @@ export default function PacingDashboard() {
   const remainingBudget = budgetUSD > 0 ? Math.max(0, budgetUSD - totalSpend) : 0;
 
   // Avg daily spend = spend up to yesterday ÷ days elapsed (excluding today)
-  // Formula: (totalSpend - todaySpend) / (daysElapsed - 1)
-  const spendToYesterday = Math.max(0, totalSpend - todaySpend);
-  const daysToYesterday  = Math.max(1, daysElapsed - 1);
-  const avgDailySpend    = spendToYesterday > 0 ? spendToYesterday / daysToYesterday : todaySpend;
+  // Only counts active accounts (non-zero spend) as benchmark
+  const spendToYesterday    = Math.max(0, totalSpend - todaySpend);
+  const daysToYesterday     = Math.max(1, daysElapsed - 1);
+  const activeAccountsCount = (pacingData?.accountTotals || []).filter(t => t.totalSpend > 0).length;
+  const avgDailySpend       = spendToYesterday > 0 ? spendToYesterday / daysToYesterday : todaySpend;
 
   // Day-by-day pacing — always available, never depends on a target being set.
   const completedDays = (pacingData?.dailyData || []).filter(d => d.date < todayStr());
@@ -2031,23 +2089,35 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                   {showPeriodCompare ? 'Hide Comparison' : 'Compare to Previous Period'}
                 </button>
                 {showPeriodCompare && (
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs text-slate-400">vs</span>
-                    <input type="date" value={compareStart}
-                      onChange={e => setCompareStart(e.target.value)}
-                      className="px-2 py-1 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
-                    <span className="text-xs text-slate-500">→</span>
-                    <input type="date" value={compareEnd}
-                      max={startDate}
-                      onChange={e => setCompareEnd(e.target.value)}
-                      className="px-2 py-1 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
-                    <button
-                      onClick={() => { if (compareStart && compareEnd) loadPrevPeriod(compareStart, compareEnd); }}
-                      disabled={!compareStart || !compareEnd || loadingPrev}
-                      className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs rounded-lg font-semibold transition-colors flex items-center gap-1">
-                      {loadingPrev ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
-                      {loadingPrev ? 'Loading…' : 'Apply'}
-                    </button>
+                  <div className="flex flex-col gap-2">
+                    {/* Current period label */}
+                    <div className="flex items-center gap-2 text-xs text-slate-400">
+                      <span className="font-semibold text-white">Current:</span>
+                      <span className="font-mono">{startDate}</span>
+                      <span>→</span>
+                      <span className="font-mono">{endDate}</span>
+                    </div>
+                    {/* Compare period — editable */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-semibold text-blue-300">Compare:</span>
+                      <input type="date" value={compareStart}
+                        onChange={e => setCompareStart(e.target.value)}
+                        className="px-2 py-1 bg-slate-700 border border-blue-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-400" />
+                      <span className="text-xs text-slate-500">→</span>
+                      <input type="date" value={compareEnd}
+                        onChange={e => setCompareEnd(e.target.value)}
+                        className="px-2 py-1 bg-slate-700 border border-blue-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-400" />
+                      <button
+                        onClick={() => { if (compareStart && compareEnd) loadPrevPeriod(compareStart, compareEnd); }}
+                        disabled={!compareStart || !compareEnd || loadingPrev}
+                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs rounded-lg font-semibold transition-colors flex items-center gap-1">
+                        {loadingPrev ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
+                        {loadingPrev ? 'Loading…' : 'Apply'}
+                      </button>
+                      {prevPacingData && !loadingPrev && (
+                        <span className="text-xs text-emerald-400">✓ loaded</span>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -2063,42 +2133,22 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                   </button>
                   {compareMode && (
                     <div className="flex items-center gap-2 flex-wrap">
-                      {/* Account A picker */}
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs text-purple-300 font-semibold">A:</span>
-                        <select
-                          value={compareSelected[0] || ''}
-                          onChange={e => {
-                            const val = e.target.value;
-                            setCompareSelected(prev => [val, prev[1] || ''].filter(Boolean));
-                          }}
-                          className="px-2 py-1 bg-slate-700 border border-purple-600 rounded-lg text-xs text-white focus:outline-none focus:border-purple-400 max-w-[200px]">
-                          <option value="">Select account A…</option>
-                          {clientRows.map(c => (
-                            <option key={c.id} value={c.id} disabled={c.id === compareSelected[1]}>
-                              {c.name.length > 30 ? c.name.slice(0,30)+'…' : c.name} ({c.id})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      {/* Account B picker */}
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs text-purple-300 font-semibold">B:</span>
-                        <select
-                          value={compareSelected[1] || ''}
-                          onChange={e => {
-                            const val = e.target.value;
-                            setCompareSelected(prev => [prev[0] || '', val].filter(Boolean));
-                          }}
-                          className="px-2 py-1 bg-slate-700 border border-purple-600 rounded-lg text-xs text-white focus:outline-none focus:border-purple-400 max-w-[200px]">
-                          <option value="">Select account B…</option>
-                          {clientRows.map(c => (
-                            <option key={c.id} value={c.id} disabled={c.id === compareSelected[0]}>
-                              {c.name.length > 30 ? c.name.slice(0,30)+'…' : c.name} ({c.id})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                      {/* Account A — searchable */}
+                      <AccountComboBox
+                        label="A"
+                        options={clientRows}
+                        value={compareSelected[0] || ''}
+                        excluded={compareSelected[1] || ''}
+                        onChange={val => setCompareSelected(prev => [val, prev[1] || ''].filter(Boolean))}
+                      />
+                      {/* Account B — searchable */}
+                      <AccountComboBox
+                        label="B"
+                        options={clientRows}
+                        value={compareSelected[1] || ''}
+                        excluded={compareSelected[0] || ''}
+                        onChange={val => setCompareSelected(prev => [prev[0] || '', val].filter(Boolean))}
+                      />
                       {compareSelected.length >= 2 && (
                         <span className="text-xs text-purple-300 bg-purple-900/40 px-2 py-1 rounded-lg">
                           {compareSelected.length} selected
