@@ -1,22 +1,15 @@
 // app/api/meta/campaigns/route.js
-//
-// POST /api/meta/campaigns
-//   body: { accountIds: ['123','456'] }
-//   →  [{ id, name, accountId, status, ... }]
-
 import { getToken }     from 'next-auth/jwt';
 import { NextResponse } from 'next/server';
 import { listCampaigns, resolveToken } from '../../../../lib/metaClient';
 
 export const dynamic = 'force-dynamic';
-
-const MAX_PARALLEL = 8;
+const MAX_PARALLEL = 4;  // reduced to avoid EMFILE
 
 async function inBatches(items, size, fn) {
   const results = [];
   for (let i = 0; i < items.length; i += size) {
-    const batch = items.slice(i, i + size);
-    const out   = await Promise.all(batch.map(fn));
+    const out = await Promise.all(items.slice(i, i + size).map(fn));
     results.push(...out);
   }
   return results;
@@ -36,11 +29,13 @@ export async function POST(request) {
 
     let body;
     try { body = await request.json(); } catch { body = {}; }
-    const accountIds = Array.isArray(body.accountIds) ? body.accountIds : [];
+    const accountIds = Array.isArray(body.accountIds)
+      ? body.accountIds.map(String)  // ensure strings
+      : [];
     if (accountIds.length === 0) return NextResponse.json([]);
 
     const nested = await inBatches(accountIds, MAX_PARALLEL, async (accId) => {
-      try { return await listCampaigns(tokenInfo, accId); }
+      try { return await listCampaigns(tokenInfo, String(accId)); }
       catch (err) {
         console.error(`[meta/campaigns] account ${accId} failed:`, err.message);
         return [];

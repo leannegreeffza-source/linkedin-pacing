@@ -49,6 +49,28 @@ async function pooled(items, n, fn) {
   return out;
 }
 
+// ── PHASE 0: Cheap account-level spend check ───────────────────────────────
+// A single ACCOUNT-pivot analytics call tells us total spend for the whole
+// account with ONE request — no campaign pagination, no per-campaign batches.
+// We use this to skip the expensive campaign+group work entirely for any
+// account with zero spend in the period, which is normally the majority of
+// the account list. This is what brings total wall-clock time back under
+// Vercel's function limit when scanning thousands of accounts.
+async function getAccountSpendOnly(accountId, dateStr, token) {
+  try {
+    const urn = `urn:li:sponsoredAccount:${accountId}`;
+    const data = await liGet(
+      `https://api.linkedin.com/v2/adAnalyticsV2?q=analytics&pivot=ACCOUNT&timeGranularity=ALL` +
+      dateStr + `&accounts[0]=${encodeURIComponent(urn)}&fields=costInUsd`, token
+    );
+    const spend = parseFloat(data?.elements?.[0]?.costInUsd || 0);
+    return spend;
+  } catch (err) {
+    console.error(`[BOD] getAccountSpendOnly ${accountId}:`, err.message);
+    return 0;
+  }
+}
+
 // ── PHASE 1: Get campaign-level spend for ALL campaigns under one account ──────
 // This is the ONLY reliable way — LinkedIn analytics scoped to one account
 // using pivot=CAMPAIGN returns all campaigns with spend for that account.
@@ -73,7 +95,7 @@ async function getAccountCampaignSpend(accountId, dateStr, token) {
     // Get spend for all campaigns in batches of 20
     const campIds = campaigns.map(c => String(c.id));
     const spendMap = {};
-    await pooled(chunk(campIds, 20), 3, async batch => {
+    await pooled(chunk(campIds, 20), 5, async batch => {
       const params = batch.map((cid, i) => `&campaigns[${i}]=urn:li:sponsoredCampaign:${cid}`).join('');
       const data = await liGet(
         `https://api.linkedin.com/v2/adAnalyticsV2?q=analytics&pivot=CAMPAIGN&timeGranularity=ALL` +
@@ -183,25 +205,50 @@ export async function POST(request) {
       const send = o => { try { ctrl.enqueue(enc.encode(JSON.stringify(o) + '\n')); } catch {} };
       try {
         const total = accountIds.length;
-        send({ phase: 1, pct: 2, message: `Fetching spend for ${total} accounts…` });
+        send({ phase: 0, pct: 1, message: `Scanning ${total} accounts for spend…` });
 
-        // Process all accounts directly — get campaigns + spend in one pass
-        // No pre-scan needed: fetching campaigns IS the scan
-        // 5 concurrent to respect rate limits
+        // ── PHASE 0: cheap account-level scan, higher concurrency since each
+        // call is a single lightweight request (no campaign pagination yet).
+        let scanned = 0;
+        const accountsWithSpend = [];
+        await pooled(accountIds, 10, async id => {
+          const spend = await getAccountSpendOnly(id, dateStr, token.accessToken);
+          if (spend > 0) accountsWithSpend.push(id);
+          scanned++;
+          if (scanned % 25 === 0 || scanned === total) {
+            send({
+              phase: 0,
+              pct: Math.round((scanned / total) * 40),
+              message: `Scanned ${scanned}/${total} accounts · ${accountsWithSpend.length} have spend`,
+              processed: scanned, total,
+            });
+          }
+        });
+
+        console.log(`[BOD] Scan done: ${accountsWithSpend.length}/${total} accounts have spend`);
+        send({
+          phase: 1, pct: 40,
+          message: `${accountsWithSpend.length} accounts have spend — fetching campaign detail…`,
+        });
+
+        // ── PHASE 1+2: expensive per-account campaign/group detail, but ONLY
+        // for accounts we already know have spend. This is normally a small
+        // fraction of the full account list, which is what keeps this whole
+        // route under Vercel's time limit.
         let done = 0;
+        const detailTotal = accountsWithSpend.length;
         const rows = [];
 
-        await pooled(accountIds, 5, async id => {
+        await pooled(accountsWithSpend, 5, async id => {
           const accountRows = await processAccount(id, dateStr, token.accessToken);
           rows.push(...accountRows);
           done++;
-          if (done % 5 === 0 || done === total) {
-            const withSpend = [...new Set(rows.map(r => r.accountId))].length;
+          if (done % 5 === 0 || done === detailTotal) {
             send({
-              phase: done < total ? 1 : 2,
-              pct: Math.round((done / total) * 95),
-              message: `${done}/${total} accounts processed · ${withSpend} with spend · ${rows.length} rows`,
-              processed: done, total, rowsSoFar: rows.length,
+              phase: done < detailTotal ? 1 : 2,
+              pct: 40 + Math.round((done / Math.max(detailTotal, 1)) * 55),
+              message: `${done}/${detailTotal} accounts processed · ${rows.length} rows`,
+              processed: done, total: detailTotal, rowsSoFar: rows.length,
             });
           }
         });

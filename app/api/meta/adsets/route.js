@@ -1,22 +1,15 @@
 // app/api/meta/adsets/route.js
-//
-// POST /api/meta/adsets
-//   body: { accountIds: ['123'], campaignIds?: ['c1','c2'] }
-//   →  [{ id, name, campaignId, accountId, ... }]
-
 import { getToken }     from 'next-auth/jwt';
 import { NextResponse } from 'next/server';
 import { listAdSets, resolveToken } from '../../../../lib/metaClient';
 
 export const dynamic = 'force-dynamic';
-
-const MAX_PARALLEL = 8;
+const MAX_PARALLEL = 4;  // reduced to avoid EMFILE
 
 async function inBatches(items, size, fn) {
   const results = [];
   for (let i = 0; i < items.length; i += size) {
-    const batch = items.slice(i, i + size);
-    const out   = await Promise.all(batch.map(fn));
+    const out = await Promise.all(items.slice(i, i + size).map(fn));
     results.push(...out);
   }
   return results;
@@ -36,12 +29,12 @@ export async function POST(request) {
 
     let body;
     try { body = await request.json(); } catch { body = {}; }
-    const accountIds  = Array.isArray(body.accountIds)  ? body.accountIds  : [];
-    const campaignIds = Array.isArray(body.campaignIds) ? body.campaignIds : null;
+    const accountIds  = Array.isArray(body.accountIds)  ? body.accountIds.map(String)  : [];
+    const campaignIds = Array.isArray(body.campaignIds) ? body.campaignIds.map(String) : null;
     if (accountIds.length === 0) return NextResponse.json([]);
 
     const nested = await inBatches(accountIds, MAX_PARALLEL, async (accId) => {
-      try { return await listAdSets(tokenInfo, accId, campaignIds); }
+      try { return await listAdSets(tokenInfo, String(accId), campaignIds); }
       catch (err) {
         console.error(`[meta/adsets] account ${accId} failed:`, err.message);
         return [];
