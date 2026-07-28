@@ -240,11 +240,11 @@ function applyRef(apiRows, ref) {
 }
 
 // ─── Excel export ─────────────────────────────────────────────────────────────
-async function exportToExcel(rows, startDate, endDate, tabName = 'All') {
+async function exportToExcel(rows, startDate, endDate, tabName = 'All', cols = COLS) {
   const XLSX = await loadXLSX();
-  const wsData = [COLS.map(c => c.label)];
+  const wsData = [cols.map(c => c.label)];
   rows.forEach(r => {
-    wsData.push(COLS.map(col => {
+    wsData.push(cols.map(col => {
       const v = r[col.key];
       if (v == null) return '';
       if (col.fmt === 'num2' || col.fmt === 'pct') return typeof v === 'number' ? v : parseFloat(v) || 0;
@@ -252,17 +252,17 @@ async function exportToExcel(rows, startDate, endDate, tabName = 'All') {
     }));
   });
   const ws  = XLSX.utils.aoa_to_sheet(wsData);
-  ws['!cols'] = COLS.map(c => ({ wch: Math.round(c.w / 6.5) }));
+  ws['!cols'] = cols.map(c => ({ wch: Math.round(c.w / 6.5) }));
   const range = XLSX.utils.decode_range(ws['!ref']);
   for (let R = 1; R <= range.e.r; R++) {
-    COLS.forEach((col, C) => {
+    cols.forEach((col, C) => {
       const a = XLSX.utils.encode_cell({ r: R, c: C });
       if (!ws[a]) return;
       if (col.fmt === 'num2') ws[a].z = '#,##0.00';
       if (col.fmt === 'pct')  ws[a].z = '0.00%';
     });
   }
-  COLS.forEach((col, C) => {
+  cols.forEach((col, C) => {
     const a = XLSX.utils.encode_cell({ r: 0, c: C });
     if (!ws[a]) return;
     ws[a].s = {
@@ -426,30 +426,28 @@ export default function BODTab() {
       // Build account list:
       // If a dedup file is uploaded → intersect platform accounts with dedup list
       // Otherwise → use all platform accounts
+      // NOTE: BUILTIN_EXCLUDED / manual exclusions are NOT applied here anymore —
+      // All Spend must reflect everything with spend on the LinkedIn platform
+      // (matching the Pacing tab's This Month MTD figure). Exclusions only affect
+      // which BOD/Self-Managed/COD sub-tab a row is *categorized* into downstream,
+      // never whether it's fetched or counted in All Spend.
       const platformIds = new Set(allAccounts.map(a => String(a.id)));
       let accountIdsToFetch;
 
       if (dedupFile && selectedSheet) {
         const dedupIds = dedupFile.sheets[selectedSheet] || [];
-        accountIdsToFetch = dedupIds.filter(id =>
-          platformIds.has(id) &&
-          (!BUILTIN_EXCLUDED_IDS.has(id) || overrideIds.includes(id)) &&
-          !excludedIds.includes(id)
-        );
+        accountIdsToFetch = dedupIds.filter(id => platformIds.has(id));
         setProgress(p => ({ ...p, message: `Using dedup list "${selectedSheet}" — ${accountIdsToFetch.length} of ${dedupIds.length} accounts matched on platform…` }));
       } else {
-        accountIdsToFetch = allAccounts
-          .filter(a =>
-            (!BUILTIN_EXCLUDED_IDS.has(String(a.id)) || overrideIds.includes(String(a.id))) &&
-            !excludedIds.includes(String(a.id)))
-          .map(a => String(a.id));
+        accountIdsToFetch = allAccounts.map(a => String(a.id));
       }
 
       if (!accountIdsToFetch.length) {
-        setError('No accounts to fetch after exclusions.');
+        setError('No accounts to fetch.');
         setLoading(false);
         return;
       }
+
 
       const res = await fetch('/api/bod', {
         method:  'POST',
@@ -569,20 +567,15 @@ export default function BODTab() {
   // ── Derived rows ──────────────────────────────────────────────────────────────
   const tabCounts = { 'All Spend': 0, BOD: 0, 'Self-Managed': 0, COD: 0 };
   rows.forEach(r => {
-    // All Spend = every row, no BOD exclusion list applied — mirrors Client Breakdown totals
+    // Every row lands in All Spend AND in exactly one of BOD/Self-Managed/COD —
+    // no exclusion filtering here, so the three sub-tabs always sum to All Spend.
     tabCounts['All Spend']++;
-    const isExcluded = (BUILTIN_EXCLUDED_IDS.has(String(r.accountId)) && !overrideIds.includes(String(r.accountId)))
-                     || excludedIds.includes(String(r.accountId));
-    if (isExcluded) return;
     const t = r.reportTab || 'BOD';
     if (tabCounts[t] != null) tabCounts[t]++;
   });
 
   const activeRows = rows.filter(r => {
-    // All Spend = every row, unfiltered — mirrors Client Breakdown totals
     if (activeReportTab === 'All Spend') return true;
-    if (BUILTIN_EXCLUDED_IDS.has(String(r.accountId)) && !overrideIds.includes(String(r.accountId))) return false;
-    if (excludedIds.includes(String(r.accountId)))      return false;
     const tab = r.reportTab || 'BOD';
     return tab === activeReportTab;
   });
@@ -920,7 +913,7 @@ export default function BODTab() {
 
         {/* Export */}
         <button disabled={computedRows.length === 0}
-          onClick={() => exportToExcel(computedRows, startDate, endDate, activeReportTab)}
+          onClick={() => exportToExcel(computedRows, startDate, endDate, activeReportTab, activeCols)}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white rounded-lg text-xs font-bold transition-colors">
           <FileSpreadsheet className="w-3.5 h-3.5" /> Export Excel
         </button>
