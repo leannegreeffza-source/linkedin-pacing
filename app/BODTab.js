@@ -367,6 +367,14 @@ export default function BODTab() {
   const [showCatMenu,     setShowCatMenu]     = useState(false);
 
   const REPORT_TABS = ['All Spend', 'BOD', 'Self-Managed', 'COD'];
+  // Display labels only — internal tab keys (and all filtering/column logic tied
+  // to them) are unchanged, this just renames what the user sees on the buttons.
+  const TAB_LABELS = {
+    'All Spend':    'BOD',
+    'BOD':          'Self Managed',
+    'Self-Managed': 'COD',
+    'COD':          'Total Spend',
+  };
 
   const refFileRef  = useRef();
   const dedupFileRef = useRef();
@@ -913,7 +921,7 @@ export default function BODTab() {
 
         {/* Export */}
         <button disabled={computedRows.length === 0}
-          onClick={() => exportToExcel(computedRows, startDate, endDate, activeReportTab, activeCols)}
+          onClick={() => exportToExcel(computedRows, startDate, endDate, TAB_LABELS[activeReportTab] || activeReportTab, activeCols)}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white rounded-lg text-xs font-bold transition-colors">
           <FileSpreadsheet className="w-3.5 h-3.5" /> Export Excel
         </button>
@@ -955,7 +963,7 @@ export default function BODTab() {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
                 isActive ? TAB_ACTIVE[tab] : 'text-slate-400 hover:text-white hover:bg-slate-700'
               }`}>
-              {tab}
+              {TAB_LABELS[tab] || tab}
               {count > 0 && (
                 <span className={`text-xs rounded-full px-1.5 ${isActive ? 'bg-white/20' : 'bg-slate-700'}`}>
                   {count}
