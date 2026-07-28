@@ -1025,12 +1025,16 @@ export default function PacingDashboard() {
     loadAccounts();
   }, [platform]);
 
+  // Only reload last month when pacingMode switches to trend — NOT on every account change
+  const lastMonthLoadedForMode = React.useRef(false);
   useEffect(() => {
-    if (pacingMode === 'trend' && selectedAccounts.length > 0) {
+    if (pacingMode === 'trend' && selectedAccounts.length > 0 && !lastMonthLoadedForMode.current) {
+      lastMonthLoadedForMode.current = true;
       setLastMonthData(null);
       loadLastMonth();
     }
-  }, [pacingMode, selectedAccounts, excludedAccounts]);
+    if (pacingMode !== 'trend') lastMonthLoadedForMode.current = false;
+  }, [pacingMode]);
 
   // Always load last month in background (needed for new-spender detection
   // in Client Breakdown regardless of pacing mode).
@@ -1199,12 +1203,17 @@ export default function PacingDashboard() {
   // Load pacing once on initial mount when accounts are ready.
   // After that, only the Refresh button triggers a reload.
   const hasInitiallyLoaded = React.useRef(false);
+  // Only load pacing ONCE on first account load — never on subsequent account changes.
+  // User must click Refresh to reload data after changing accounts.
   useEffect(() => {
     if (selectedAccounts.length > 0 && !hasInitiallyLoaded.current) {
       hasInitiallyLoaded.current = true;
       loadPacing();
     }
-  }, [selectedAccounts]);
+    // Intentionally NO selectedAccounts in deps after initial load —
+    // account toggling should never trigger a data reload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAccounts.length > 0 ? 'ready' : 'waiting']);
 
   async function loadPrevPeriod(customStart, customEnd) {
     const zarIds = new Set(accounts.filter(a => detectCurrency(a) === 'ZAR').map(a => String(a.id)));
@@ -1361,7 +1370,7 @@ export default function PacingDashboard() {
     : [];
 
   // ── Change 3: Ranked clients (top contributor first) ──────────────────────
-  const clientRows = accounts
+  const clientRows = React.useMemo(() => accounts
     .filter(a => selectedAccounts.includes(a.id) && !excludedAccounts.includes(a.id))
     .map(a => {
       const totals = pacingData?.accountTotals?.find(t => t.accountId === a.id);
@@ -1389,11 +1398,12 @@ export default function PacingDashboard() {
       };
     })
     .filter(c => c.totalSpend > 0) // hide zero-spend accounts
-    .sort((a, b) => b.totalSpend - a.totalSpend); // Top contributor first
+    .sort((a, b) => b.totalSpend - a.totalSpend) // Top contributor first
+  , [accounts, selectedAccounts, excludedAccounts, pacingData, lastMonthData, perAccountBudget]);
 
-  // Split by billing currency
-  const zarClientRows = clientRows.filter(c => c.currency === 'ZAR');
-  const usdClientRows = clientRows.filter(c => c.currency !== 'ZAR');
+  // Split by billing currency — derived from memoised clientRows
+  const zarClientRows = React.useMemo(() => clientRows.filter(c => c.currency === 'ZAR'), [clientRows]);
+  const usdClientRows = React.useMemo(() => clientRows.filter(c => c.currency !== 'ZAR'), [clientRows]);
 
   const scMap = {
     emerald: { bg: 'bg-emerald-900/40', border: 'border-emerald-500', text: 'text-emerald-400', badge: 'bg-emerald-800 text-emerald-200', bar: 'bg-emerald-500' },
