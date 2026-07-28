@@ -57,6 +57,8 @@ function todayStr()      { return toYMD(new Date()); }
 function firstOfMonth()  { const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth(), 1)); }
 function lastMonthStart(){ const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth()-1, 1)); }
 function lastMonthEnd()  { const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth(), 0)); }
+function currentMonthStart(){ const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth(), 1)); }
+function currentMonthEnd()  { const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth()+1, 0)); }
 
 // ─── Formatting ───────────────────────────────────────────────────────────────
 function fmtNum(v, dec=2) {
@@ -345,8 +347,8 @@ export default function BODTab() {
   const [refSource,    setRefSource]    = useState('none'); // 'none' | 'uploaded'
 
   // ── Date inputs — user must press Run to fetch ────────────────────────────
-  const [startDate,    setStartDate]    = useState(lastMonthStart);
-  const [endDate,      setEndDate]      = useState(lastMonthEnd);
+  const [startDate,    setStartDate]    = useState(currentMonthStart);
+  const [endDate,      setEndDate]      = useState(currentMonthEnd);
 
   // ── Data ─────────────────────────────────────────────────────────────────────
   const [rows,         setRows]         = useState([]);
