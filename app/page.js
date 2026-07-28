@@ -533,7 +533,7 @@ function calcCPC(spend, clicks) {
 }
 
 // ── DailyChart (with optional forecast line) ──────────────────────────────────
-function DailyChart({ dailyData, idealDailySpend, forecastData, budgetUSD, avgLastMonthDaily }) {
+function DailyChart({ dailyData, idealDailySpend, forecastData, budgetUSD, avgLastMonthDaily, avgDailySpend }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
 
@@ -559,14 +559,19 @@ function DailyChart({ dailyData, idealDailySpend, forecastData, budgetUSD, avgLa
       // Pad forecast to full length — null for actual days
       const paddedForecast = [...new Array(actualLen).fill(null), ...forecastSpends];
 
-      // Use idealDailySpend if set, otherwise fall back to last month avg for colouring
-      const benchmarkDaily = idealDailySpend > 0 ? idealDailySpend : (avgLastMonthDaily > 0 ? avgLastMonthDaily : 0);
+      // Bar colours based on this month's average daily spend vs last month avg benchmark
+      // Green  = at or above last month avg daily (over is good)
+      // Yellow = within 10% below last month avg (almost there)
+      // Red    = more than 10% below last month avg (under)
+      const benchmarkDaily = avgLastMonthDaily > 0 ? avgLastMonthDaily
+                           : idealDailySpend > 0   ? idealDailySpend
+                           : 0;
       const barColors = dailyData.map(d => {
-        if (!benchmarkDaily) return 'rgba(52,211,153,0.85)'; // no benchmark — show green (over is good)
+        if (!benchmarkDaily) return 'rgba(52,211,153,0.85)'; // no benchmark — all green
         const ratio = d.spend / benchmarkDaily;
-        if (ratio >= 0.9 && ratio <= 1.1) return 'rgba(52,211,153,0.85)'; // green — on track
-        if (ratio < 0.9) return 'rgba(251,191,36,0.85)';                   // yellow — under
-        return 'rgba(52,211,153,0.85)';                                     // green — over is good
+        if (ratio >= 1.0)  return 'rgba(52,211,153,0.85)';   // green  — at or over last month avg
+        if (ratio >= 0.9)  return 'rgba(251,191,36,0.85)';   // yellow — within 10% below (almost there)
+        return 'rgba(239,68,68,0.85)';                        // red    — more than 10% below
       });
 
       const idealLine = allLabels.map(() => parseFloat((idealDailySpend || 0).toFixed(2)));
@@ -574,7 +579,18 @@ function DailyChart({ dailyData, idealDailySpend, forecastData, budgetUSD, avgLa
       const datasets = [
         { label: 'Daily Spend ($)', data: paddedSpends, backgroundColor: barColors, borderRadius: 4, order: 3, type: 'bar' },
         { label: 'Ideal Daily ($)', data: idealLine, type: 'line', borderColor: 'rgba(147,197,253,0.7)', borderWidth: 2, borderDash: [5, 4], pointRadius: 0, fill: false, order: 1 },
-        ...(avgLastMonthDaily > 0 ? [{ label: 'Last Month Avg ($)', data: allLabels.map(() => parseFloat(avgLastMonthDaily.toFixed(2))), type: 'line', borderColor: 'rgba(251,191,36,0.8)', borderWidth: 2, borderDash: [4, 3], pointRadius: 0, fill: false, order: 0 }] : []),
+        ...(avgLastMonthDaily > 0 ? [{
+          label: 'Last Month Avg ($)',
+          data: allLabels.map(() => parseFloat(avgLastMonthDaily.toFixed(2))),
+          type: 'line',
+          // Colour the line based on whether this month's avg is above/below last month's avg
+          borderColor: avgLastMonthDaily > 0
+            ? (avgDailySpend >= avgLastMonthDaily     ? 'rgba(52,211,153,0.9)'   // green — this month above last
+              : avgDailySpend >= avgLastMonthDaily*0.9 ? 'rgba(251,191,36,0.9)'  // yellow — within 10%
+              : 'rgba(239,68,68,0.9)')                                             // red — more than 10% below
+            : 'rgba(251,191,36,0.8)',
+          borderWidth: 2, borderDash: [4, 3], pointRadius: 0, fill: false, order: 0,
+        }] : []),
       ];
 
       if (forecastData && forecastData.length > 0) {
@@ -1455,7 +1471,7 @@ export default function PacingDashboard() {
         isNewSpender: lastMonthData != null && spend > 0 && lastMonthSpend === 0,
       };
     })
-    .filter(c => c.totalSpend > 0) // hide zero-spend accounts
+    .filter(c => c.totalSpend > 0 || c.currency === 'ZAR') // show ZAR accounts even with 0 spend (excluded from API)
     .sort((a, b) => b.totalSpend - a.totalSpend) // Top contributor first
   , [accounts, selectedAccounts, excludedAccounts, pacingData, lastMonthData, perAccountBudget]);
 
@@ -2205,6 +2221,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                         forecastData={forecastData}
                         budgetUSD={budgetUSD}
                         avgLastMonthDaily={lastMonthTotal > 0 && lastMonthDays > 0 ? lastMonthTotal / lastMonthDays : 0}
+                        avgDailySpend={avgDailySpend}
                       />
                     ) : (
                       <div className="flex items-center justify-center h-64 text-slate-500 text-sm">
