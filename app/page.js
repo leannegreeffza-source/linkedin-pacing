@@ -533,7 +533,7 @@ function calcCPC(spend, clicks) {
 }
 
 // ── DailyChart (with optional forecast line) ──────────────────────────────────
-function DailyChart({ dailyData, idealDailySpend, forecastData, budgetUSD, avgLastMonthDaily, avgDailySpend }) {
+function DailyChart({ dailyData, idealDailySpend, forecastData, dailyTargetUSD, avgLastMonthDaily, avgDailySpend }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
 
@@ -608,10 +608,10 @@ function DailyChart({ dailyData, idealDailySpend, forecastData, budgetUSD, avgLa
         });
       }
 
-      if (budgetUSD > 0) {
+      if (dailyTargetUSD > 0) {
         datasets.push({
-          label: 'Target ($)',
-          data: allLabels.map(() => parseFloat(budgetUSD.toFixed(2))),
+          label: 'Target ($/day)',
+          data: allLabels.map(() => parseFloat(dailyTargetUSD.toFixed(2))),
           type: 'line',
           borderColor: 'rgba(248,113,113,0.6)',
           borderWidth: 1.5,
@@ -647,7 +647,7 @@ function DailyChart({ dailyData, idealDailySpend, forecastData, budgetUSD, avgLa
       document.head.appendChild(script);
     }
     return () => { if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; } };
-  }, [dailyData, idealDailySpend, forecastData, budgetUSD]);
+  }, [dailyData, idealDailySpend, forecastData, dailyTargetUSD]);
 
   return <div style={{ height: 300, position: 'relative' }}><canvas ref={canvasRef} /></div>;
 }
@@ -759,6 +759,9 @@ function AccountDrillDown({ account, totals, onBack, idealDailySpend, budgetUSD,
   const cpc = calcCPC(spend, clicks);
 
   const forecastData = buildForecast(dailyData, budgetUSD, budgetMonth, budgetYear);
+  // Target line should show the per-day slice of the budget, not the full monthly amount
+  const daysInMonthDD = (budgetYear && budgetMonth) ? new Date(budgetYear, budgetMonth, 0).getDate() : 30;
+  const dailyTargetUSD = budgetUSD > 0 ? budgetUSD / daysInMonthDD : 0;
 
   return (
     <div className="space-y-5">
@@ -808,7 +811,7 @@ function AccountDrillDown({ account, totals, onBack, idealDailySpend, budgetUSD,
             dailyData={dailyData}
             idealDailySpend={idealDailySpend}
             forecastData={forecastData}
-            budgetUSD={budgetUSD}
+            dailyTargetUSD={dailyTargetUSD}
           />
         ) : (
           <div className="h-64 flex items-center justify-center text-slate-500 text-sm">No daily data</div>
@@ -2217,6 +2220,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                         <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-purple-300"></div>Forecast</div>
                         <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-blue-300"></div>5-Day Avg</div>
                         <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-yellow-300"></div>Last Mo. Avg</div>
+                        {budgetUSD > 0 && <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-red-300"></div>Target/day</div>}
                       </div>
                     </div>
                     {loading ? (
@@ -2228,7 +2232,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                         dailyData={pacingData.dailyData}
                         idealDailySpend={idealDailySpend}
                         forecastData={forecastData}
-                        budgetUSD={budgetUSD}
+                        dailyTargetUSD={budgetUSD > 0 && daysInBudgetMonth > 0 ? budgetUSD / daysInBudgetMonth : 0}
                         avgLastMonthDaily={lastMonthTotal > 0 && lastMonthDays > 0 ? lastMonthTotal / lastMonthDays : 0}
                         avgDailySpend={avgDailySpend}
                       />
