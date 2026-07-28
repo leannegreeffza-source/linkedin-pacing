@@ -578,7 +578,7 @@ function DailyChart({ dailyData, idealDailySpend, forecastData, budgetUSD, avgLa
 
       const datasets = [
         { label: 'Daily Spend ($)', data: paddedSpends, backgroundColor: barColors, borderRadius: 4, order: 3, type: 'bar' },
-        { label: 'Ideal Daily ($)', data: idealLine, type: 'line', borderColor: 'rgba(147,197,253,0.7)', borderWidth: 2, borderDash: [5, 4], pointRadius: 0, fill: false, order: 1 },
+        { label: '5-Day Avg ($)', data: idealLine, type: 'line', borderColor: 'rgba(147,197,253,0.7)', borderWidth: 2, borderDash: [5, 4], pointRadius: 0, fill: false, order: 1 },
         ...(avgLastMonthDaily > 0 ? [{
           label: 'Last Month Avg ($)',
           data: allLabels.map(() => parseFloat(avgLastMonthDaily.toFixed(2))),
@@ -1374,8 +1374,17 @@ export default function PacingDashboard() {
   const daysRemainingInMonth = Math.max(0, daysInBudgetMonth - todayDate);
   const isCurrentMonth = budgetYear === now.getFullYear() && budgetMonth === (now.getMonth() + 1);
 
-  // Ideal daily is always budget / full month days
-  const idealDailySpend = budgetUSD > 0 ? budgetUSD / daysInBudgetMonth : 0;
+  // 5-day average daily spend (used as ideal daily benchmark)
+  const completedDaysPre = (pacingData?.dailyData || []).filter(d => d.date < todayStr());
+  const last5DaysPre     = completedDaysPre.slice(-5);
+  const fiveDayAvg       = last5DaysPre.length > 0
+    ? last5DaysPre.reduce((s, d) => s + d.spend, 0) / last5DaysPre.length
+    : 0;
+
+  // Ideal daily = 5-day avg if available, else budget / days in month, else 0
+  const idealDailySpend = fiveDayAvg > 0 ? fiveDayAvg
+                        : budgetUSD > 0  ? budgetUSD / daysInBudgetMonth
+                        : 0;
 
   // Ideal spend by today (day N of the month) — for pacing status
   const idealSpendToToday = idealDailySpend * todayDate;
@@ -2206,7 +2215,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                         <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-yellow-500"></div>Under</div>
                         <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-red-400"></div>Over</div>
                         <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-purple-300"></div>Forecast</div>
-                        <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-blue-300"></div>Ideal</div>
+                        <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-blue-300"></div>5-Day Avg</div>
                         <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-yellow-300"></div>Last Mo. Avg</div>
                       </div>
                     </div>
