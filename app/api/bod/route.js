@@ -145,7 +145,7 @@ async function processAccount(accountId, dateStr, token) {
       const cid = String(c.id);
       const gid = (c.campaignGroup || '').split(':').pop();
       campMeta[cid] = {
-        gid, gname: groupNames[gid] || '', type: c.type || '',
+        gid, gname: groupNames[gid] || '', type: c.type || '', cname: c.name || '',
         campStart: c.runSchedule?.start ? new Date(c.runSchedule.start).toISOString().split('T')[0] : '',
         campEnd:   c.runSchedule?.end   ? new Date(c.runSchedule.end).toISOString().split('T')[0]   : '',
       };
@@ -158,10 +158,11 @@ async function processAccount(accountId, dateStr, token) {
       if (!m) return;
       const gid = m.gid || '0';
       if (!groupAgg[gid]) {
-        groupAgg[gid] = { gname: m.gname, spend: 0, campStart: m.campStart, campEnd: m.campEnd, adUnits: new Set() };
+        groupAgg[gid] = { gname: m.gname, spend: 0, campStart: m.campStart, campEnd: m.campEnd, adUnits: new Set(), campaignNames: new Set() };
       }
       groupAgg[gid].spend += spend;
-      if (m.type) groupAgg[gid].adUnits.add(m.type);
+      if (m.type)  groupAgg[gid].adUnits.add(m.type);
+      if (m.cname) groupAgg[gid].campaignNames.add(m.cname);
       if (m.campStart && (!groupAgg[gid].campStart || m.campStart < groupAgg[gid].campStart))
         groupAgg[gid].campStart = m.campStart;
       if (m.campEnd && (!groupAgg[gid].campEnd || m.campEnd > groupAgg[gid].campEnd))
@@ -176,7 +177,8 @@ async function processAccount(accountId, dateStr, token) {
         campStartDate: v.campStart, campEndDate: v.campEnd,
         mediaSpendUSD: v.spend, localSpend: v.spend,
         category: '', io: '', staffCode: '', billingAgency: '', bookingAgency: '',
-        advertiser: '', industry: '', ciNumber: '', specialNotes: '', campaignName: '',
+        advertiser: '', industry: '', ciNumber: '', specialNotes: '',
+        campaignName: [...v.campaignNames].join(', '),
       }));
   } catch (err) {
     console.error(`[BOD] processAccount ${accountId}:`, err.message);
