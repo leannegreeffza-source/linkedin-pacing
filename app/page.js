@@ -59,7 +59,10 @@ function getPacingStatus(actual, ideal) {
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 function toDateInput(date) {
-  return date.toISOString().split('T')[0];
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 function todayStr() { return toDateInput(new Date()); }
 function firstOfMonth() {
@@ -69,14 +72,14 @@ function firstOfMonth() {
 
 // ── FilterSection ─────────────────────────────────────────────────────────────
 // ── ClientTable ───────────────────────────────────────────────────────────────
-function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClick, daysElapsed, lastMonthDays }) {
+function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClick, daysElapsed, lastMonthDays, labelA = 'Period A', labelB = 'Period B' }) {
   const [search, setSearch] = React.useState('');
   const filtered = !search ? rows
     : rows.filter(r => r.name.toLowerCase().includes(search.toLowerCase()) || String(r.id).includes(search));
   const de = daysElapsed || 1;
   const lmd = lastMonthDays || 30;
-  const totalThisMonth  = filtered.reduce((s, r) => s + r.totalSpend, 0);
-  const totalLastMonth  = filtered.reduce((s, r) => s + (r.lastMonthSpend || 0), 0);
+  const totalThisMonth  = filtered.reduce((s, r) => s + r.periodASpend, 0);
+  const totalLastMonth  = filtered.reduce((s, r) => s + (r.periodBSpend || 0), 0);
   const totalAvgThis    = de > 0 ? totalThisMonth / de : 0;
   const totalAvgLast    = lmd > 0 ? totalLastMonth / lmd : 0;
   return (
@@ -93,7 +96,7 @@ function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClic
           {rows.some(r => r.isNewSpender) && (
             <div className="flex items-center gap-1.5 text-xs text-red-300">
               <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
-              New this month (no spend last month)
+              New in {labelA} (no spend in {labelB})
             </div>
           )}
         </div>
@@ -107,38 +110,38 @@ function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClic
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-700">
-                {['Client', 'Account ID', 'This Month', 'Last Month', 'Avg Daily (This Mo.)', 'Avg Daily (Last Mo.)'].map(h => (
+                {['Client', 'Account ID', labelA, labelB, `Avg Daily (${labelA})`, `Avg Daily (${labelB})`].map(h => (
                   <th key={h} className={`pb-3 text-xs text-slate-400 font-bold uppercase tracking-wide ${['Client','Account ID'].includes(h) ? 'text-left' : 'text-right'}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.map((client, i) => {
-                const avgThis = de > 0 ? client.totalSpend / de : 0;
-                const avgLast = lmd > 0 ? (client.lastMonthSpend || 0) / lmd : 0;
-                const vsLast  = client.lastMonthSpend > 0
-                  ? ((client.totalSpend - client.lastMonthSpend) / client.lastMonthSpend) * 100 : null;
+                const avgThis = de > 0 ? client.periodASpend / de : 0;
+                const avgLast = lmd > 0 ? (client.periodBSpend || 0) / lmd : 0;
+                const vsLast  = client.periodBSpend > 0
+                  ? ((client.periodASpend - client.periodBSpend) / client.periodBSpend) * 100 : null;
                 return (
                   <tr key={client.id}
                     className={`border-b border-slate-700/50 ${client.isNewSpender ? 'bg-red-900/20 hover:bg-red-900/30' : i % 2 !== 0 ? 'bg-slate-700/20 hover:bg-slate-700/40' : 'hover:bg-slate-700/40'} cursor-pointer`}
                     onClick={() => onRowClick(client)}>
                     <td className="py-2.5 pr-4 max-w-xs">
                       <div className="flex items-center gap-1.5">
-                        {client.isNewSpender && <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" title="New spender this month" />}
+                        {client.isNewSpender && <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" title="New spender this period" />}
                         <div className={`font-semibold text-xs truncate hover:text-blue-300 ${client.isNewSpender ? 'text-red-300' : 'text-white'}`}>{client.name}</div>
                       </div>
                     </td>
                     <td className="py-2.5 pr-4"><div className="text-xs text-slate-400 font-mono">{client.id}</div></td>
                     <td className="py-2.5 text-right text-xs">
-                      <div className="font-bold text-white font-mono">{fmtCur(client.totalSpend)}</div>
+                      <div className="font-bold text-white font-mono">{fmtCur(client.periodASpend)}</div>
                       {vsLast !== null && (
                         <div className={`text-xs font-mono ${vsLast >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {vsLast >= 0 ? '+' : ''}{vsLast.toFixed(1)}% vs LM
+                          {vsLast >= 0 ? '+' : ''}{vsLast.toFixed(1)}% vs {labelB}
                         </div>
                       )}
                     </td>
                     <td className="py-2.5 text-right font-mono text-slate-300 text-xs">
-                      {client.lastMonthSpend > 0 ? fmtCur(client.lastMonthSpend) : <span className="text-slate-600">—</span>}
+                      {client.periodBSpend > 0 ? fmtCur(client.periodBSpend) : <span className="text-slate-600">—</span>}
                     </td>
                     <td className={`py-2.5 text-right font-mono text-xs font-semibold ${avgThis >= avgLast && avgLast > 0 ? 'text-emerald-400' : avgLast > 0 ? 'text-yellow-400' : 'text-white'}`}>
                       {fmtCur(avgThis)}
@@ -948,6 +951,52 @@ async function exportToExcel(clientRows, dailyData, startDate, endDate, totalSpe
   XLSX.writeFile(wb, `linkedin_pacing_${startDate}_${endDate}.xlsx`);
 }
 
+async function exportClientBreakdownExcel({ zarClientRows, usdClientRows, cbStartA, cbEndA, cbStartB, cbEndB }) {
+  if (!window.XLSX) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  const XLSX = window.XLSX;
+  const wb = XLSX.utils.book_new();
+  const labelA = `${cbStartA} to ${cbEndA}`;
+  const labelB = `${cbStartB} to ${cbEndB}`;
+
+  const buildSheet = rows => {
+    const totalA = rows.reduce((s, r) => s + (r.periodASpend || 0), 0);
+    const totalB = rows.reduce((s, r) => s + (r.periodBSpend || 0), 0);
+    return XLSX.utils.aoa_to_sheet([
+      ['Client Breakdown Export'],
+      [`Period A: ${labelA}`],
+      [`Period B: ${labelB}`],
+      ['Generated', new Date().toLocaleString()],
+      [],
+      ['Client Name', 'Account ID', `Spend (${labelA})`, `Spend (${labelB})`, '% Change'],
+      ...rows.map(r => [
+        r.name, r.id,
+        parseFloat((r.periodASpend || 0).toFixed(2)),
+        parseFloat((r.periodBSpend || 0).toFixed(2)),
+        r.periodBSpend > 0 ? parseFloat((((r.periodASpend - r.periodBSpend) / r.periodBSpend) * 100).toFixed(1)) : 'N/A',
+      ]),
+      [],
+      ['TOTAL', '', parseFloat(totalA.toFixed(2)), parseFloat(totalB.toFixed(2)), ''],
+    ]);
+  };
+
+  const wsZar = buildSheet(zarClientRows);
+  wsZar['!cols'] = [40, 15, 18, 18, 12].map(w => ({ wch: w }));
+  XLSX.utils.book_append_sheet(wb, wsZar, 'ZAR Accounts');
+
+  const wsUsd = buildSheet(usdClientRows);
+  wsUsd['!cols'] = [40, 15, 18, 18, 12].map(w => ({ wch: w }));
+  XLSX.utils.book_append_sheet(wb, wsUsd, 'USD Accounts');
+
+  XLSX.writeFile(wb, `client_breakdown_${cbStartA}_${cbEndA}_vs_${cbStartB}_${cbEndB}.xlsx`);
+}
+
 function exportToPDF(clientRows, dailyData, startDate, endDate, totalSpend, budgetUSD, pacingLabel) {
   const win = window.open('', '_blank');
   if (!win) return;
@@ -1224,8 +1273,8 @@ export default function PacingDashboard() {
       const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const body = {
         accountIds: activeIds,
-        startDate: prevStart.toISOString().split('T')[0],
-        endDate: prevEnd.toISOString().split('T')[0],
+        startDate: toDateInput(prevStart),
+        endDate: toDateInput(prevEnd),
       };
       const res = await fetch(`${apiPrefix}/pacing`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1309,8 +1358,8 @@ export default function PacingDashboard() {
         const spanDays = Math.round((end - start) / (1000*60*60*24));
         const prevEnd   = new Date(start); prevEnd.setDate(prevEnd.getDate() - 1);
         const prevStart = new Date(prevEnd); prevStart.setDate(prevStart.getDate() - spanDays);
-        psDate = prevStart.toISOString().split('T')[0];
-        peDate = prevEnd.toISOString().split('T')[0];
+        psDate = toDateInput(prevStart);
+        peDate = toDateInput(prevEnd);
         // Store computed dates so inputs show them
         setCompareStart(psDate);
         setCompareEnd(peDate);
@@ -1353,7 +1402,7 @@ export default function PacingDashboard() {
     yesterdaySpend:          pacingData?.summary?.yesterdaySpend   || 0,
     dayBeforeYesterdaySpend: (() => {
       const d = new Date(); d.setDate(d.getDate() - 2);
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = toDateInput(d);
       return (pacingData?.dailyData || []).find(d => d.date === dateStr)?.spend || 0;
     })(),
     totalDays:               pacingData?.summary?.totalDays        || 1,
@@ -1463,36 +1512,93 @@ export default function PacingDashboard() {
     : [];
 
   // ── Change 3: Ranked clients (top contributor first) ──────────────────────
+  // ── Client Breakdown table — independent two-period comparison ─────────────
+  // Decoupled from the main dashboard startDate/endDate: this lets the table
+  // compare any two custom ranges without disturbing the Daily Chart, Pacing
+  // Status, or summary cards elsewhere on the page.
+  const [cbStartA, setCbStartA] = React.useState(startDate);
+  const [cbEndA,   setCbEndA]   = React.useState(endDate);
+  const [cbStartB, setCbStartB] = React.useState(() => {
+    const d = new Date();
+    return toDateInput(new Date(d.getFullYear(), d.getMonth() - 1, 1));
+  });
+  const [cbEndB, setCbEndB] = React.useState(() => {
+    const d = new Date();
+    return toDateInput(new Date(d.getFullYear(), d.getMonth(), 0));
+  });
+  const [cbDataA, setCbDataA] = React.useState(null);
+  const [cbDataB, setCbDataB] = React.useState(null);
+  const [cbLoading, setCbLoading] = React.useState(false);
+  const cbInitialized = React.useRef(false);
+
+  async function loadClientBreakdownRanges() {
+    const zarIds = new Set(accounts.filter(a => detectCurrency(a) === 'ZAR').map(a => String(a.id)));
+    const activeIds = selectedAccounts.filter(id => !excludedAccounts.includes(id) && !zarIds.has(String(id)));
+    if (activeIds.length === 0) return;
+    setCbLoading(true);
+    try {
+      const [resA, resB] = await Promise.all([
+        fetch(`${apiPrefix}/pacing`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountIds: activeIds, startDate: cbStartA, endDate: cbEndA }),
+        }),
+        fetch(`${apiPrefix}/pacing`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountIds: activeIds, startDate: cbStartB, endDate: cbEndB }),
+        }),
+      ]);
+      if (resA.ok) setCbDataA(await resA.json());
+      if (resB.ok) setCbDataB(await resB.json());
+    } catch (err) { console.error(err); }
+    setCbLoading(false);
+  }
+
+  // Seed the table once from data already loaded elsewhere (this month / last
+  // month), so it isn't empty before the user picks custom dates.
+  useEffect(() => {
+    if (!cbInitialized.current && pacingData && lastMonthData) {
+      cbInitialized.current = true;
+      setCbDataA(pacingData);
+      setCbDataB(lastMonthData);
+    }
+  }, [pacingData, lastMonthData]);
+
+  const cbDaysA = cbDataA ? Math.round((new Date(cbEndA) - new Date(cbStartA)) / 86400000) + 1 : 1;
+  const cbDaysB = cbDataB ? Math.round((new Date(cbEndB) - new Date(cbStartB)) / 86400000) + 1 : 1;
+
+
   const clientRows = React.useMemo(() => accounts
     .filter(a => selectedAccounts.includes(a.id) && !excludedAccounts.includes(a.id))
     .map(a => {
-      const totals = pacingData?.accountTotals?.find(t => t.accountId === a.id);
-      const spend = totals?.totalSpend || 0;
-      const imp   = totals?.totalImpressions || 0;
-      const clk   = totals?.totalClicks || 0;
-      const lastMonthTotals = lastMonthData?.accountTotals?.find(t => t.accountId === a.id);
-      const lastMonthSpend = lastMonthTotals?.totalSpend || 0;
+      const totalsA = cbDataA?.accountTotals?.find(t => t.accountId === a.id);
+      const periodASpend = totalsA?.totalSpend || 0;
+      const imp   = totalsA?.totalImpressions || 0;
+      const clk   = totalsA?.totalClicks || 0;
+      const totalsB = cbDataB?.accountTotals?.find(t => t.accountId === a.id);
+      const periodBSpend = totalsB?.totalSpend || 0;
       return {
         ...a,
         currency: detectCurrency(a),
-        totalSpend: spend,
-        todaySpend: totals?.todaySpend || 0,
-        yesterdaySpend: totals?.yesterdaySpend || 0,
+        totalSpend: periodASpend,
+        periodASpend,
+        periodBSpend,
+        todaySpend: totalsA?.todaySpend || 0,
+        yesterdaySpend: totalsA?.yesterdaySpend || 0,
         totalImpressions: imp,
         totalClicks: clk,
-        totalLeads: totals?.totalLeads || 0,
+        totalLeads: totalsA?.totalLeads || 0,
         ctr: calcCTR(clk, imp),
-        cpm: calcCPM(spend, imp),
-        cpc: calcCPC(spend, clk),
-        pct: perAccountBudget > 0 ? (spend / perAccountBudget) * 100 : 0,
-        improved: (totals?.todaySpend || 0) >= (totals?.yesterdaySpend || 0),
-        lastMonthSpend,
-        isNewSpender: lastMonthData != null && spend > 0 && lastMonthSpend === 0,
+        cpm: calcCPM(periodASpend, imp),
+        cpc: calcCPC(periodASpend, clk),
+        pct: perAccountBudget > 0 ? (periodASpend / perAccountBudget) * 100 : 0,
+        improved: (totalsA?.todaySpend || 0) >= (totalsA?.yesterdaySpend || 0),
+        lastMonthSpend: periodBSpend,
+        isNewSpender: cbDataB != null && periodASpend > 0 && periodBSpend === 0,
       };
     })
-    .filter(c => c.totalSpend > 0 || c.currency === 'ZAR') // show ZAR accounts even with 0 spend (excluded from API)
-    .sort((a, b) => b.totalSpend - a.totalSpend) // Top contributor first
-  , [accounts, selectedAccounts, excludedAccounts, pacingData, lastMonthData, perAccountBudget]);
+    .filter(c => c.periodASpend > 0 || c.currency === 'ZAR') // show ZAR accounts even with 0 spend (excluded from API)
+    .sort((a, b) => b.periodASpend - a.periodASpend) // Top contributor first
+  , [accounts, selectedAccounts, excludedAccounts, cbDataA, cbDataB, perAccountBudget]);
 
   // Split by billing currency — derived from memoised clientRows
   const zarClientRows = React.useMemo(() => clientRows.filter(c => c.currency === 'ZAR'), [clientRows]);
@@ -2254,7 +2360,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
 
                   {/* Client Breakdown — with compare mode + drill-down */}
                   <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
-                    <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                       <h3 className="text-sm font-bold text-white uppercase tracking-wide flex items-center gap-2">
                         <Users className="w-4 h-4" />
                         {compareMode ? 'Account Comparison' : 'Client Breakdown'}
@@ -2266,6 +2372,45 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                         </span>
                       )}
                     </div>
+
+                    {!compareMode && (
+                      <div className="flex items-end gap-3 flex-wrap mb-4 p-3 bg-slate-900/40 rounded-lg border border-slate-700">
+                        <div>
+                          <label className="text-xs text-slate-500 block mb-1">Period A — start</label>
+                          <input type="date" value={cbStartA} max={cbEndA}
+                            onChange={e => setCbStartA(e.target.value)}
+                            className="px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-500 block mb-1">Period A — end</label>
+                          <input type="date" value={cbEndA} min={cbStartA}
+                            onChange={e => setCbEndA(e.target.value)}
+                            className="px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-500 block mb-1">Period B — start</label>
+                          <input type="date" value={cbStartB} max={cbEndB}
+                            onChange={e => setCbStartB(e.target.value)}
+                            className="px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-500 block mb-1">Period B — end</label>
+                          <input type="date" value={cbEndB} min={cbStartB}
+                            onChange={e => setCbEndB(e.target.value)}
+                            className="px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <button onClick={loadClientBreakdownRanges} disabled={cbLoading}
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5">
+                          <RefreshCw className={`w-3.5 h-3.5 ${cbLoading ? 'animate-spin' : ''}`} />
+                          {cbLoading ? 'Loading…' : 'Run Report'}
+                        </button>
+                        <button onClick={() => exportClientBreakdownExcel({ zarClientRows, usdClientRows, cbStartA, cbEndA, cbStartB, cbEndB })}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5">
+                          <Download className="w-3.5 h-3.5" />
+                          Export Excel
+                        </button>
+                      </div>
+                    )}
 
                     {compareMode && compareSelected.length >= 2 ? (
                       <ComparisonTable
@@ -2283,14 +2428,14 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                               <span className="text-xs font-bold text-yellow-400 uppercase tracking-wide px-2 py-1 rounded bg-yellow-900/30 border border-yellow-700">ZAR Accounts</span>
                               <span className="text-xs text-slate-500">{zarClientRows.length} client{zarClientRows.length !== 1 ? 's' : ''}</span>
                             </div>
-                            <ClientTable rows={zarClientRows} currencySymbol="R" fmtCur={fmtR} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={daysElapsed} lastMonthDays={lastMonthDays} />
+                            <ClientTable rows={zarClientRows} currencySymbol="R" fmtCur={fmtR} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={cbDaysA} lastMonthDays={cbDaysB} labelA={`${cbStartA} → ${cbEndA}`} labelB={`${cbStartB} → ${cbEndB}`} />
                           </div>
                           <div>
                             <div className="flex items-center gap-2 mb-3">
                               <span className="text-xs font-bold text-emerald-400 uppercase tracking-wide px-2 py-1 rounded bg-emerald-900/30 border border-emerald-700">USD Accounts</span>
                               <span className="text-xs text-slate-500">{usdClientRows.length} client{usdClientRows.length !== 1 ? 's' : ''}</span>
                             </div>
-                            <ClientTable rows={usdClientRows} currencySymbol="$" fmtCur={fmtD} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={daysElapsed} lastMonthDays={lastMonthDays} />
+                            <ClientTable rows={usdClientRows} currencySymbol="$" fmtCur={fmtD} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={cbDaysA} lastMonthDays={cbDaysB} labelA={`${cbStartA} → ${cbEndA}`} labelB={`${cbStartB} → ${cbEndB}`} />
                           </div>
                         </div>
                       )
