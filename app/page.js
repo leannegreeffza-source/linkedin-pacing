@@ -1701,6 +1701,15 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                 }`}>
                 Pacing
               </button>
+              <button
+                onClick={() => setActiveTab('pacingReporting')}
+                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                  activeTab === 'pacingReporting'
+                    ? 'bg-blue-600 text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}>
+                Pacing Reporting
+              </button>
               {/* BOD / BOD2 / Kenya are LinkedIn-only — recon format is shaped
                   around LinkedIn IDs and the existing dedup sheets. Meta-equivalent
                   recon tabs ship in Stage 2. Hide the buttons on Meta to avoid
@@ -2485,6 +2494,683 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
       </div>
 
       )} {/* end activeTab === 'pacing' */}
+
+      {/* ── Pacing Reporting Tab (duplicate of Pacing) ── */}
+      {activeTab === 'pacingReporting' && (
+      <div className="max-w-screen-xl mx-auto px-6 py-6 grid grid-cols-12 gap-6">
+
+        {/* Sidebar */}
+        <div className="col-span-3 space-y-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 80px)', position: 'sticky', top: 16 }}>
+
+          {/* ── Change 2: Custom Date Range Picker ── */}
+          <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3 flex items-center gap-2">
+              <Calendar className="w-3.5 h-3.5" /> Date Range
+            </h3>
+            <div className="space-y-2">
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Month (starts on the 1st)</label>
+                <select
+                  value={startDate.slice(0, 7)}
+                  onChange={e => {
+                    const [y, m] = e.target.value.split('-');
+                    const firstDay = `${y}-${m}-01`;
+                    setStartDate(firstDay);
+                    const now = new Date();
+                    const isCurrentMo = parseInt(y) === now.getFullYear() && parseInt(m) === now.getMonth() + 1;
+                    setEndDate(isCurrentMo ? todayStr() : toDateInput(new Date(parseInt(y), parseInt(m), 0)));
+                  }}
+                  className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500">
+                  {Array.from({ length: 12 }, (_, i) => {
+                    const now = new Date();
+                    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                    const val = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+                    const label = d.toLocaleString('default', { month: 'long', year: 'numeric' });
+                    return <option key={val} value={val}>{label}</option>;
+                  })}
+                </select>
+                <div className="text-xs text-slate-500 mt-1">From: {startDate}</div>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Start Date <span className="text-slate-600">(optional custom)</span></label>
+                <input type="date" value={startDate}
+                  max={endDate}
+                  onChange={e => setStartDate(e.target.value)}
+                  className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">End Date</label>
+                <input type="date" value={endDate}
+                  min={startDate}
+                  onChange={e => setEndDate(e.target.value)}
+                  className="w-full px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
+              </div>
+            </div>
+            {/* Quick month buttons */}
+            <div className="flex flex-wrap gap-1.5 mt-3">
+              {Array.from({ length: 3 }, (_, offset) => {
+                const now = new Date();
+                const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+                const y = d.getFullYear(), mo = d.getMonth();
+                const firstDay = `${y}-${String(mo+1).padStart(2,'0')}-01`;
+                const lastDay = offset === 0 ? todayStr() : toDateInput(new Date(y, mo+1, 0));
+                const label = offset === 0 ? 'This Month' : d.toLocaleString('default', { month: 'short' }) + ' ' + y;
+                const isActive = startDate === firstDay;
+                return (
+                  <button key={firstDay} onClick={() => { setStartDate(firstDay); setEndDate(lastDay); }}
+                    className={`px-2 py-1 rounded text-xs transition-colors ${isActive ? 'bg-blue-600 text-white' : 'bg-slate-700 hover:bg-blue-700 text-slate-300 hover:text-white'}`}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Pacing Mode */}
+            <div className="mt-4 pt-4 border-t border-slate-700">
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-2">
+                <Activity className="w-3.5 h-3.5" /> Pacing Mode
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button onClick={() => setPacingMode('target')}
+                  className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors text-center ${pacingMode === 'target' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+                  <div>🎯 Target</div>
+                  <div className="text-xs font-normal opacity-75 mt-0.5">vs set budget</div>
+                </button>
+                <button onClick={() => { setPacingMode('trend'); if (!lastMonthData && selectedAccounts.length > 0) loadLastMonth(); }}
+                  className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors text-center ${pacingMode === 'trend' ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+                  <div>📈 Trend</div>
+                  <div className="text-xs font-normal opacity-75 mt-0.5">vs last month</div>
+                </button>
+              </div>
+              {pacingMode === 'trend' && loadingLastMonth && (
+                <div className="text-xs text-slate-500 mt-2 flex items-center gap-1">
+                  <RefreshCw className="w-3 h-3 animate-spin" /> Loading last month…
+                </div>
+              )}
+            </div>
+            <div className="mt-2 text-center">
+              <span className="text-xs bg-slate-700 text-slate-400 px-2 py-0.5 rounded-full">
+                {totalDays} day{totalDays !== 1 ? 's' : ''} · {daysElapsed} elapsed
+              </span>
+            </div>
+          </div>
+
+          {/* Budget */}
+          <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-2">
+                <DollarSign className="w-3.5 h-3.5" /> Target
+              </h3>
+              <button onClick={() => setShowBudgetModal(true)}
+                className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300">
+                <Edit3 className="w-3 h-3" /> Edit
+              </button>
+            </div>
+            {budgetUSD > 0 ? (
+              <div className="space-y-2">
+                <div>
+                  <div className="text-2xl font-bold text-white">{fmtD(budgetUSD)}</div>
+                  <div className="text-xs text-slate-400">USD Total Target</div>
+                </div>
+                {budgetZAR > 0 && (
+                  <div>
+                    <div className="text-lg font-bold text-yellow-400">{fmtR(budgetZAR)}</div>
+                    <div className="text-xs text-slate-400">ZAR Total Target</div>
+                  </div>
+                )}
+                <div className="pt-2 border-t border-slate-700 space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">Days in month</span>
+                    <span className="text-white font-mono">{daysInBudgetMonth}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">Ideal daily</span>
+                    <span className="text-white font-mono">{fmtD(idealDailySpend)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">Days left in month</span>
+                    <span className="text-slate-300 font-mono">{daysRemainingInMonth}</span>
+                  </div>
+                  {isCurrentMonth && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-slate-400">Month-end forecast</span>
+                      <span className={`font-mono font-bold ${projectedMonthTotal > budgetUSD * 1.05 ? 'text-red-400' : projectedMonthTotal < budgetUSD * 0.9 ? 'text-yellow-400' : 'text-emerald-400'}`}>
+                        {fmtD(projectedMonthTotal)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-400">Per client ({activeAccountCount})</span>
+                    <span className="text-slate-300 font-mono">{fmtD(perAccountBudget)}</span>
+                  </div>
+                </div>
+                {budget.note && <div className="text-xs text-slate-500 italic pt-1">{budget.note}</div>}
+              </div>
+            ) : (
+              <button onClick={() => setShowBudgetModal(true)}
+                className="w-full py-3 border-2 border-dashed border-slate-600 rounded-lg text-slate-400 text-sm hover:border-blue-500 hover:text-blue-400 transition-colors">
+                + Set Target
+              </button>
+            )}
+          </div>
+
+          {/* Step 1 — Clients (with exclusion) */}
+          <div className="flex items-center gap-2 px-1">
+            <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">1</span>
+            <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Clients</span>
+            {exclusionSaving && <RefreshCw className="w-3 h-3 text-slate-500 animate-spin ml-auto" />}
+          </div>
+
+          <FilterSection
+            title="Clients"
+            icon={Users}
+            items={accounts}
+            selectedIds={selectedAccounts}
+            onToggle={makeToggle(setSelectedAccounts)}
+            loading={loadingAccounts}
+            searchValue={clientSearch}
+            onSearchChange={setClientSearch}
+            onSelectFiltered={makeSelectFiltered(setSelectedAccounts, excludedAccounts)}
+            onDeselectFiltered={makeDeselectFiltered(setSelectedAccounts)}
+            excludedIds={excludedAccounts}
+            onToggleExclude={toggleExcludeAccount}
+            onUploadExclusion={handleExclusionFileUpload}
+            onClearExclusion={clearUploadedExclusions}
+            uploadingExcl={uploadingExcl}
+            uploadedCount={uploadedExclusions.length}
+            totalCount={accounts.length}
+            accentColor="blue"
+            emptyMessage="No accounts found"
+            showExclude={true}
+          />
+
+
+        </div>
+
+        {/* Main Content */}
+        <div className="col-span-9 space-y-6">
+          {selectedAccounts.length === 0 ? (
+            <div className="bg-slate-800 rounded-xl p-16 text-center border border-slate-700">
+              <Users className="w-14 h-14 text-slate-600 mx-auto mb-4" />
+              <h2 className="text-xl font-bold text-white mb-2">No Clients Selected</h2>
+              <p className="text-slate-400">Select at least one client from the sidebar to view pacing</p>
+            </div>
+          ) : (
+            <>
+              {/* Summary Cards — mode-aware */}
+              <div className={`grid gap-4 ${pacingMode === 'target' ? 'grid-cols-5' : 'grid-cols-4'}`}>
+                {pacingMode === 'target' ? (<>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Target</div>
+                    <div className="text-2xl font-bold text-white mb-1">{budgetUSD > 0 ? fmtD(budgetUSD) : '-'}</div>
+                    <button onClick={() => setShowBudgetModal(true)} className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                      <Edit3 className="w-3 h-3" /> {budgetUSD > 0 ? 'Edit target' : 'Set target'}
+                    </button>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Spent to Date</div>
+                    <div className="text-2xl font-bold text-white mb-1">{fmtD(totalSpend)}</div>
+                    <div className="text-xs text-slate-400">{budgetUSD > 0 ? `${fmt(budgetUsedPct, 1)}% of target` : `Day ${daysElapsed} of ${totalDays}`}</div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Remaining</div>
+                    <div className={`text-2xl font-bold mb-1 ${budgetUSD > 0 && totalSpend > budgetUSD ? 'text-red-400' : 'text-white'}`}>
+                      {budgetUSD > 0 ? fmtD(remainingBudget) : '-'}
+                    </div>
+                    <div className="text-xs text-slate-400">{budgetUSD > 0 ? `${daysRemainingInMonth} days left` : 'Set a target'}</div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">{isCurrentMonth ? 'Month-End Forecast' : 'Final Spend'}</div>
+                    <div className={`text-2xl font-bold mb-1 ${budgetUSD > 0 && projectedMonthTotal > budgetUSD * 1.05 ? 'text-red-400' : budgetUSD > 0 && projectedMonthTotal < budgetUSD * 0.9 ? 'text-yellow-400' : 'text-white'}`}>
+                      {fmtD(isCurrentMonth ? projectedMonthTotal : totalSpend)}
+                    </div>
+                    <div className="text-xs text-slate-400">{isCurrentMonth ? `Avg ${fmtD(avgDailySpend)}/day` : 'Final spend'}</div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Today's Spend</div>
+                    <div className={`text-2xl font-bold mb-1 ${todaySpend >= (idealDailySpend > 0 ? idealDailySpend * 0.9 : 0) ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                      {fmtD(todaySpend)}
+                    </div>
+                    <div className="text-xs text-slate-400 flex items-center gap-1">
+                      <span>Yesterday: {fmtD(yesterdaySpend)}</span>
+                      {yesterdaySpend > 0 && <span className={todaySpend >= yesterdaySpend ? 'text-emerald-400' : 'text-red-400'}>
+                        {todaySpend >= yesterdaySpend ? '▲' : '▼'} {Math.abs(((todaySpend - yesterdaySpend) / yesterdaySpend) * 100).toFixed(1)}%
+                      </span>}
+                    </div>
+                  </div>
+                </>) : (<>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">This Month MTD</div>
+                    <div className="text-2xl font-bold text-white mb-1">{fmtD(totalSpend)}</div>
+                    <div className="text-xs text-slate-400">Day {daysElapsed} of month</div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Last Month Total</div>
+                    <div className="text-2xl font-bold text-white mb-1">{lastMonthTotal > 0 ? fmtD(lastMonthTotal) : loadingLastMonth ? '…' : '-'}</div>
+                    <div className="text-xs text-slate-400">
+                      {(() => {
+                        const now = new Date();
+                        const y = now.getFullYear(), m = now.getMonth();
+                        const prevMonth = m === 0 ? 12 : m;
+                        const prevYear  = m === 0 ? y - 1 : y;
+                        const firstDay  = `${prevYear}-${String(prevMonth).padStart(2,'0')}-01`;
+                        // Use local date to avoid UTC timezone shift cutting off last day
+                        const lastDate  = new Date(prevYear, prevMonth, 0);
+                        const lastDay   = `${lastDate.getFullYear()}-${String(lastDate.getMonth()+1).padStart(2,'0')}-${String(lastDate.getDate()).padStart(2,'0')}`;
+                        return lastMonthData ? `${firstDay} → ${lastDay}` : 'Prior month';
+                      })()}
+                    </div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Month-End Forecast</div>
+                    <div className={`text-2xl font-bold mb-1 ${trendVsLastMonth >= 0 ? 'text-emerald-400' : trendVsLastMonth < -5 ? 'text-yellow-400' : 'text-slate-300'}`}>
+                      {fmtD(trendProjected)}
+                    </div>
+                    <div className="text-xs text-slate-400">{lastMonthTotal > 0 ? `${trendVsLastMonth >= 0 ? '+' : ''}${trendVsLastMonth.toFixed(1)}% vs last month` : `Avg ${fmtD(avgDailySpend)}/day`}</div>
+                  </div>
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Today's Spend</div>
+                    <div className={`text-2xl font-bold mb-1 ${lastMonthTotal > 0 && todaySpend >= lastMonthTotal / lastMonthDays ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                      {fmtD(todaySpend)}
+                    </div>
+                    <div className="text-xs text-slate-400 flex items-center gap-1">
+                      <span>Yesterday: {fmtD(yesterdaySpend)}</span>
+                      {yesterdaySpend > 0 && <span className={todaySpend >= yesterdaySpend ? 'text-emerald-400' : 'text-red-400'}>
+                        {todaySpend >= yesterdaySpend ? '▲' : '▼'} {Math.abs(((todaySpend - yesterdaySpend) / yesterdaySpend) * 100).toFixed(1)}%
+                      </span>}
+                    </div>
+                  </div>
+                </>)}
+              </div>
+
+              {/* Pacing Status + Today vs Yesterday */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className={`rounded-xl p-6 border-2 ${
+                  dayPacingTrend === 'Trending Up' ? 'bg-blue-900/20 border-blue-700' :
+                  dayPacingTrend === 'Steady'      ? 'bg-emerald-900/20 border-emerald-700' :
+                                                     'bg-yellow-900/20 border-yellow-700'
+                }`}>
+                  <div className="flex items-start justify-between mb-3 gap-2">
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wide">Overall Pacing</h3>
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-700 text-slate-300 whitespace-nowrap flex-shrink-0">{startDate} → {endDate}</span>
+                  </div>
+                  <div className="flex items-center gap-3 mb-4">
+                    {dayPacingTrend === 'Trending Up'
+                      ? <TrendingUp className="w-10 h-10 text-blue-400 flex-shrink-0" />
+                      : dayPacingTrend === 'Steady'
+                      ? <CheckCircle className="w-10 h-10 text-emerald-400 flex-shrink-0" />
+                      : <TrendingDown className="w-10 h-10 text-yellow-400 flex-shrink-0" />
+                    }
+                    <div>
+                      <div className={`text-2xl font-bold ${
+                        dayPacingTrend === 'Trending Up' ? 'text-blue-400' :
+                        dayPacingTrend === 'Steady'      ? 'text-emerald-400' : 'text-yellow-400'
+                      }`}>{dayPacingTrend}</div>
+                      <div className="text-xs text-slate-400 mt-0.5">vs {last5Days.length}-day avg · day {daysElapsed} of {totalDays}</div>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Latest day spend</span>
+                      <span className="text-white font-mono font-bold">{fmtD(latestDaySpend)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">{last5Days.length}-day avg</span>
+                      <span className="text-slate-300 font-mono">{fmtD(dayPacingAvg)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Difference</span>
+                      <span className={`font-mono font-bold ${dayPacingDiff >= 0 ? 'text-blue-400' : 'text-yellow-400'}`}>
+                        {dayPacingDiff >= 0 ? '+' : ''}{fmtD(dayPacingDiff)}
+                      </span>
+                    </div>
+                  </div>
+                  {budgetUSD > 0 && (
+                    <div className="mt-4 pt-3 border-t border-slate-700">
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-400">Target used</span>
+                        <span className="text-slate-300">{fmt(budgetUsedPct, 1)}% of {fmtD(budgetUSD)}</span>
+                      </div>
+                      <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full ${sc.bar}`} style={{ width: `${Math.min(budgetUsedPct, 100)}%` }} />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wide mb-4">Yesterday vs Day Before</h3>
+                  <div className={`flex items-center gap-3 mb-5 p-4 rounded-xl border ${
+                    yesterdaySpend >= dayBeforeYesterdaySpend ? 'bg-emerald-900/30 border-emerald-600' : 'bg-red-900/20 border-red-700'
+                  }`}>
+                    {yesterdaySpend >= dayBeforeYesterdaySpend
+                      ? <TrendingUp className="w-10 h-10 text-emerald-400 flex-shrink-0" />
+                      : <TrendingDown className="w-10 h-10 text-red-400 flex-shrink-0" />
+                    }
+                    <div>
+                      <div className={`text-xl font-bold ${yesterdaySpend >= dayBeforeYesterdaySpend ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {yesterdaySpend >= dayBeforeYesterdaySpend ? 'Spend Up' : 'Spend Down'}
+                      </div>
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        {dayBeforeYesterdaySpend > 0
+                          ? `${Math.abs(((yesterdaySpend - dayBeforeYesterdaySpend) / dayBeforeYesterdaySpend) * 100).toFixed(1)}% ${yesterdaySpend >= dayBeforeYesterdaySpend ? 'higher' : 'lower'} than day before`
+                          : 'No data for day before yesterday'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-slate-700/60 rounded-lg p-4">
+                      <div className="text-xs text-slate-400 mb-2 font-medium leading-tight min-h-[2rem]">Yesterday</div>
+                      <div className="text-xl font-bold text-white truncate">{fmtD(yesterdaySpend)}</div>
+                    </div>
+                    <div className="bg-slate-700/60 rounded-lg p-4">
+                      <div className="text-xs text-slate-400 mb-2 font-medium leading-tight min-h-[2rem]">Day Before</div>
+                      <div className="text-xl font-bold text-white truncate">{fmtD(dayBeforeYesterdaySpend)}</div>
+                    </div>
+                  </div>
+                  {dayBeforeYesterdaySpend > 0 && (
+                    <div className={`mt-3 text-xs font-medium flex items-center gap-1 ${yesterdaySpend >= dayBeforeYesterdaySpend ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {yesterdaySpend >= dayBeforeYesterdaySpend
+                        ? <><ChevronUp className="w-3 h-3" /> +{fmtD(yesterdaySpend - dayBeforeYesterdaySpend)} vs day before</>
+                        : <><ChevronDown className="w-3 h-3" /> -{fmtD(dayBeforeYesterdaySpend - yesterdaySpend)} vs day before</>}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Metrics Bar — Impressions / Clicks / CTR / CPM / CPC */}
+              {pacingData && (
+                <MetricsBar
+                  totalSpend={totalSpend}
+                  totalImpressions={totalImpressions}
+                  totalClicks={totalClicks}
+                  prevData={showPeriodCompare ? { totalSpend: prevTotalSpend, totalImpressions: prevTotalImpressions, totalClicks: prevTotalClicks } : null}
+                  showComparison={showPeriodCompare && !!prevPacingData}
+                />
+              )}
+
+              {/* Period Comparison Controls */}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    const next = !showPeriodCompare;
+                    setShowPeriodCompare(next);
+                    if (next && !prevPacingData) loadPrevPeriod();
+                  }}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    showPeriodCompare ? 'bg-blue-700 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                  }`}>
+                  <Calendar className="w-3.5 h-3.5" />
+                  {showPeriodCompare ? 'Hide Comparison' : 'Compare to Previous Period'}
+                </button>
+                {showPeriodCompare && (
+                  <div className="flex flex-col gap-2">
+                    {/* Current period label */}
+                    <div className="flex items-center gap-2 text-xs text-slate-400">
+                      <span className="font-semibold text-white">Current:</span>
+                      <span className="font-mono">{startDate}</span>
+                      <span>→</span>
+                      <span className="font-mono">{endDate}</span>
+                    </div>
+                    {/* Compare period — editable */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-semibold text-blue-300">Compare:</span>
+                      <input type="date" value={compareStart}
+                        onChange={e => setCompareStart(e.target.value)}
+                        className="px-2 py-1 bg-slate-700 border border-blue-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-400" />
+                      <span className="text-xs text-slate-500">→</span>
+                      <input type="date" value={compareEnd}
+                        onChange={e => setCompareEnd(e.target.value)}
+                        className="px-2 py-1 bg-slate-700 border border-blue-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-400" />
+                      <button
+                        onClick={() => { if (compareStart && compareEnd) loadPrevPeriod(compareStart, compareEnd); }}
+                        disabled={!compareStart || !compareEnd || loadingPrev}
+                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs rounded-lg font-semibold transition-colors flex items-center gap-1">
+                        {loadingPrev ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
+                        {loadingPrev ? 'Loading…' : 'Apply'}
+                      </button>
+                      {prevPacingData && !loadingPrev && (
+                        <span className="text-xs text-emerald-400">✓ loaded</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Compare mode toggle + account picker */}
+                <div className="ml-auto flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={() => { setCompareMode(m => !m); setCompareSelected([]); setDrillAccount(null); }}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      compareMode ? 'bg-purple-700 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                    }`}>
+                    <Users className="w-3.5 h-3.5" />
+                    {compareMode ? 'Exit Compare Mode' : 'Compare Accounts'}
+                  </button>
+                  {compareMode && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* Account A — searchable */}
+                      <AccountComboBox
+                        label="A"
+                        options={clientRows}
+                        value={compareSelected[0] || ''}
+                        excluded={compareSelected[1] || ''}
+                        onChange={val => setCompareSelected(prev => [val, prev[1] || ''].filter(Boolean))}
+                      />
+                      {/* Account B — searchable */}
+                      <AccountComboBox
+                        label="B"
+                        options={clientRows}
+                        value={compareSelected[1] || ''}
+                        excluded={compareSelected[0] || ''}
+                        onChange={val => setCompareSelected(prev => [prev[0] || '', val].filter(Boolean))}
+                      />
+                      {compareSelected.length >= 2 && (
+                        <span className="text-xs text-purple-300 bg-purple-900/40 px-2 py-1 rounded-lg">
+                          {compareSelected.length} selected
+                        </span>
+                      )}
+                      {compareSelected.length > 0 && (
+                        <button onClick={() => setCompareSelected([])}
+                          className="text-slate-500 hover:text-red-400 text-xs px-1">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Drill-down or Comparison or Default view */}
+              {drillAccount ? (
+                <AccountDrillDown
+                  account={drillAccount}
+                  totals={pacingData?.accountTotals?.find(t => t.accountId === drillAccount.id)}
+                  onBack={() => setDrillAccount(null)}
+                  idealDailySpend={idealDailySpend}
+                  budgetUSD={budgetUSD}
+                  budgetMonth={budgetMonth}
+                  budgetYear={budgetYear}
+                />
+              ) : (
+                <>
+                  {/* Daily Chart */}
+                  <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wide">
+                        Daily Spend — {startDate} to {endDate}
+                        {forecastData.length > 0 && <span className="ml-2 text-xs text-purple-300 font-normal normal-case">+ forecast to month end</span>}
+                      </h3>
+                      <div className="flex items-center gap-4 text-xs text-slate-400">
+                        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-emerald-500"></div>On Track</div>
+                        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-yellow-500"></div>Under</div>
+                        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-red-400"></div>Over</div>
+                        <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-purple-300"></div>Forecast</div>
+                        <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-blue-300"></div>5-Day Avg</div>
+                        <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-yellow-300"></div>Last Mo. Avg</div>
+                        {budgetUSD > 0 && <div className="flex items-center gap-1.5"><div className="w-6 border-t-2 border-dashed border-red-300"></div>Target/day</div>}
+                      </div>
+                    </div>
+                    {loading ? (
+                      <div className="flex items-center justify-center h-64">
+                        <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
+                      </div>
+                    ) : pacingData?.dailyData?.length > 0 ? (
+                      <DailyChart
+                        dailyData={pacingData.dailyData}
+                        idealDailySpend={idealDailySpend}
+                        forecastData={forecastData}
+                        dailyTargetUSD={budgetUSD > 0 && daysInBudgetMonth > 0 ? budgetUSD / daysInBudgetMonth : 0}
+                        avgLastMonthDaily={lastMonthTotal > 0 && lastMonthDays > 0 ? lastMonthTotal / lastMonthDays : 0}
+                        avgDailySpend={avgDailySpend}
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-64 text-slate-500 text-sm">
+                        No spend data for this period
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Last Month (Day 1-X) — moved here, directly above Account Comparison / Client Breakdown */}
+                  <div className="bg-slate-800 rounded-xl p-5 border border-slate-700 max-w-xs">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Last Month (Day 1–{daysElapsed})</div>
+                    <div className="text-2xl font-bold text-white mb-1">{samePeriodLastMonth > 0 ? fmtD(samePeriodLastMonth) : loadingLastMonth ? '…' : '-'}</div>
+                    <div className={`text-xs font-semibold mt-0.5 ${trendDiff >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {samePeriodLastMonth > 0 ? `${trendDiff >= 0 ? '+' : ''}${fmtD(trendDiff)} (${trendPct.toFixed(1)}%)` : ''}
+                    </div>
+                  </div>
+
+                  {/* Client Breakdown — with compare mode + drill-down */}
+                  <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wide flex items-center gap-2">
+                        <Users className="w-4 h-4" />
+                        {compareMode ? 'Account Comparison' : 'Client Breakdown'}
+                        <span className="text-slate-500 text-xs font-normal normal-case">{activeAccountCount} clients · ranked by spend</span>
+                      </h3>
+                      {compareMode && compareSelected.length >= 2 && (
+                        <span className="text-xs text-purple-300 bg-purple-900/40 px-2 py-1 rounded-lg">
+                          ▲ = best in column
+                        </span>
+                      )}
+                    </div>
+
+                    {!compareMode && (
+                      <div className="flex items-end gap-3 flex-wrap mb-4 p-3 bg-slate-900/40 rounded-lg border border-slate-700">
+                        <div>
+                          <label className="text-xs text-slate-500 block mb-1">Period A — start</label>
+                          <input type="date" value={cbStartA} max={cbEndA}
+                            onChange={e => setCbStartA(e.target.value)}
+                            className="px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-500 block mb-1">Period A — end</label>
+                          <input type="date" value={cbEndA} min={cbStartA}
+                            onChange={e => setCbEndA(e.target.value)}
+                            className="px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <button onClick={loadClientBreakdownRanges} disabled={cbLoading}
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5">
+                          <RefreshCw className={`w-3.5 h-3.5 ${cbLoading ? 'animate-spin' : ''}`} />
+                          {cbLoading ? 'Loading…' : 'Run Report'}
+                        </button>
+                        <button onClick={() => exportClientBreakdownExcel({ zarClientRows, usdClientRows, cbStartA, cbEndA, cbStartB, cbEndB })}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5">
+                          <Download className="w-3.5 h-3.5" />
+                          Export Excel
+                        </button>
+                      </div>
+                    )}
+
+                    {compareMode && compareSelected.length >= 2 ? (
+                      <ComparisonTable
+                        accounts={accounts.filter(a => selectedAccounts.includes(a.id) && !excludedAccounts.includes(a.id))}
+                        accountTotals={pacingData?.accountTotals}
+                        selectedIds={compareSelected}
+                      />
+                    ) : (
+                      clientRows.length === 0 ? (
+                        <p className="text-slate-500 text-sm text-center py-6">No client data available</p>
+                      ) : (
+                        <div className="space-y-8">
+                          <div>
+                            <div className="flex items-center gap-2 mb-3">
+                              <span className="text-xs font-bold text-yellow-400 uppercase tracking-wide px-2 py-1 rounded bg-yellow-900/30 border border-yellow-700">ZAR Accounts</span>
+                              <span className="text-xs text-slate-500">{zarClientRows.length} client{zarClientRows.length !== 1 ? 's' : ''}</span>
+                            </div>
+                            <ClientTable rows={zarClientRows} currencySymbol="R" fmtCur={fmtR} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={cbDaysA} lastMonthDays={cbDaysB} labelA={`${cbStartA} → ${cbEndA}`} labelB={`${cbStartB} → ${cbEndB}`} />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 mb-3">
+                              <span className="text-xs font-bold text-emerald-400 uppercase tracking-wide px-2 py-1 rounded bg-emerald-900/30 border border-emerald-700">USD Accounts</span>
+                              <span className="text-xs text-slate-500">{usdClientRows.length} client{usdClientRows.length !== 1 ? 's' : ''}</span>
+                            </div>
+                            <ClientTable rows={usdClientRows} currencySymbol="$" fmtCur={fmtD} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={cbDaysA} lastMonthDays={cbDaysB} labelA={`${cbStartA} → ${cbEndA}`} labelB={`${cbStartB} → ${cbEndB}`} />
+                          </div>
+                        </div>
+                      )
+                    )}
+                  </div>
+
+                  {/* Daily Spend Block */}
+                  {pacingData?.dailyData?.length > 0 && (
+                    <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-sm font-bold text-white uppercase tracking-wide">Daily Spend Breakdown</h3>
+                        <span className="text-xs text-slate-400">{pacingData.dailyData.length} days</span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-700">
+                              <th className="text-left py-2 px-3 text-slate-400 font-semibold">Date</th>
+                              <th className="text-right py-2 px-3 text-slate-400 font-semibold">Spend (USD)</th>
+                              <th className="text-right py-2 px-3 text-slate-400 font-semibold">vs Last Mo. Avg</th>
+                              <th className="text-right py-2 px-3 text-slate-400 font-semibold">Impressions</th>
+                              <th className="text-right py-2 px-3 text-slate-400 font-semibold">Clicks</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[...pacingData.dailyData].reverse().map((d, i) => {
+                              const avg = lastMonthTotal > 0 && lastMonthDays > 0 ? lastMonthTotal / lastMonthDays : 0;
+                              const diff = avg > 0 ? d.spend - avg : null;
+                              const isOver = diff !== null && diff > 0;
+                              return (
+                                <tr key={d.date} className={`border-b border-slate-700/50 ${i % 2 === 0 ? 'bg-slate-700/20' : ''}`}>
+                                  <td className="py-2 px-3 text-slate-300 font-mono">{d.date}</td>
+                                  <td className="py-2 px-3 text-right font-mono text-white font-semibold">{fmtD(d.spend)}</td>
+                                  <td className={`py-2 px-3 text-right font-mono font-semibold ${diff === null ? 'text-slate-500' : isOver ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {diff === null ? '—' : `${isOver ? '+' : ''}${fmtD(diff)}`}
+                                  </td>
+                                  <td className="py-2 px-3 text-right font-mono text-slate-400">{(d.impressions || 0).toLocaleString()}</td>
+                                  <td className="py-2 px-3 text-right font-mono text-slate-400">{(d.clicks || 0).toLocaleString()}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                          <tfoot>
+                            <tr className="border-t-2 border-slate-600">
+                              <td className="py-2 px-3 text-slate-400 font-bold">Total</td>
+                              <td className="py-2 px-3 text-right font-mono text-white font-bold">{fmtD(totalSpend)}</td>
+                              <td className="py-2 px-3 text-right font-mono text-slate-500 font-bold">
+                                {lastMonthTotal > 0 ? `Avg: ${fmtD(lastMonthTotal / lastMonthDays)}/day` : '—'}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono text-slate-400 font-bold">{(pacingData.dailyData.reduce((s,d) => s + (d.impressions||0), 0)).toLocaleString()}</td>
+                              <td className="py-2 px-3 text-right font-mono text-slate-400 font-bold">{(pacingData.dailyData.reduce((s,d) => s + (d.clicks||0), 0)).toLocaleString()}</td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
+
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      )} {/* end activeTab === 'pacingReporting' */}
 
       {/* ── BOD Tab ── */}
       {activeTab === 'bod' && (
