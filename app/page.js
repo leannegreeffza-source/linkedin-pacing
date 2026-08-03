@@ -963,38 +963,33 @@ async function exportClientBreakdownExcel({ zarClientRows, usdClientRows, cbStar
   const XLSX = window.XLSX;
   const wb = XLSX.utils.book_new();
   const labelA = `${cbStartA} to ${cbEndA}`;
-  const labelB = `${cbStartB} to ${cbEndB}`;
 
   const buildSheet = rows => {
     const totalA = rows.reduce((s, r) => s + (r.periodASpend || 0), 0);
-    const totalB = rows.reduce((s, r) => s + (r.periodBSpend || 0), 0);
     return XLSX.utils.aoa_to_sheet([
       ['Client Breakdown Export'],
-      [`Period A: ${labelA}`],
-      [`Period B: ${labelB}`],
+      [`Period: ${labelA}`],
       ['Generated', new Date().toLocaleString()],
       [],
-      ['Client Name', 'Account ID', `Spend (${labelA})`, `Spend (${labelB})`, '% Change'],
+      ['Client Name', 'Account ID', `Spend (${labelA})`],
       ...rows.map(r => [
         r.name, r.id,
         parseFloat((r.periodASpend || 0).toFixed(2)),
-        parseFloat((r.periodBSpend || 0).toFixed(2)),
-        r.periodBSpend > 0 ? parseFloat((((r.periodASpend - r.periodBSpend) / r.periodBSpend) * 100).toFixed(1)) : 'N/A',
       ]),
       [],
-      ['TOTAL', '', parseFloat(totalA.toFixed(2)), parseFloat(totalB.toFixed(2)), ''],
+      ['TOTAL', '', parseFloat(totalA.toFixed(2))],
     ]);
   };
 
   const wsZar = buildSheet(zarClientRows);
-  wsZar['!cols'] = [40, 15, 18, 18, 12].map(w => ({ wch: w }));
+  wsZar['!cols'] = [40, 15, 18].map(w => ({ wch: w }));
   XLSX.utils.book_append_sheet(wb, wsZar, 'ZAR Accounts');
 
   const wsUsd = buildSheet(usdClientRows);
-  wsUsd['!cols'] = [40, 15, 18, 18, 12].map(w => ({ wch: w }));
+  wsUsd['!cols'] = [40, 15, 18].map(w => ({ wch: w }));
   XLSX.utils.book_append_sheet(wb, wsUsd, 'USD Accounts');
 
-  XLSX.writeFile(wb, `client_breakdown_${cbStartA}_${cbEndA}_vs_${cbStartB}_${cbEndB}.xlsx`);
+  XLSX.writeFile(wb, `client_breakdown_${cbStartA}_${cbEndA}.xlsx`);
 }
 
 function exportToPDF(clientRows, dailyData, startDate, endDate, totalSpend, budgetUSD, pacingLabel) {
