@@ -2387,18 +2387,6 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                             onChange={e => setCbEndA(e.target.value)}
                             className="px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
                         </div>
-                        <div>
-                          <label className="text-xs text-slate-500 block mb-1">Period B — start</label>
-                          <input type="date" value={cbStartB} max={cbEndB}
-                            onChange={e => setCbStartB(e.target.value)}
-                            className="px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
-                        </div>
-                        <div>
-                          <label className="text-xs text-slate-500 block mb-1">Period B — end</label>
-                          <input type="date" value={cbEndB} min={cbStartB}
-                            onChange={e => setCbEndB(e.target.value)}
-                            className="px-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
-                        </div>
                         <button onClick={loadClientBreakdownRanges} disabled={cbLoading}
                           className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5">
                           <RefreshCw className={`w-3.5 h-3.5 ${cbLoading ? 'animate-spin' : ''}`} />
