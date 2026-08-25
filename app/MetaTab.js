@@ -29,7 +29,17 @@ const DEFAULT_FX = 17.30;       // matches your March 2026 recon FX
 const FLAG_PCT   = 0.10;        // 10% DoD threshold
 
 // ── Date helpers ─────────────────────────────────────────────────────────────
-function toYMD(d)         { return d.toISOString().split('T')[0]; }
+// FIX: previously used d.toISOString().split('T')[0], which converts to UTC
+// first. In SAST (UTC+2), that rolls local midnight back to 22:00 the
+// PREVIOUS day, so "today" / "This Month" / "Last Month" were all one day
+// off. Read the browser's local date parts directly instead — same fix
+// pattern as the Pacing tab's toDateInput() bug.
+function toYMD(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 function todayStr()       { return toYMD(new Date()); }
 function firstOfMonth()   { const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth(), 1)); }
 function lastMonthStart() { const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth()-1, 1)); }
@@ -47,7 +57,7 @@ function fmtPct(v, dec=1) {
   if (isNaN(n)) return '—';
   return (n >= 0 ? '+' : '') + (n * 100).toFixed(dec) + '%';
 }
-// Day-on-day fluctuation. `null` if yesterday was 0 and today is also 0; Infinity if today > 0 and yesterday = 0.
+// Day-on-day fluctuation. `null` if both are 0; Infinity if today>0 and yesterday=0.
 function dod(today, yesterday) {
   const t = today || 0, y = yesterday || 0;
   if (y === 0 && t === 0) return null;
@@ -75,19 +85,13 @@ async function loadXLSX() {
 export default function MetaTab() {
   const { data: session } = useSession();
 
-  // ── Accounts (with currency) ──────────────────────────────────────────────
-  const [allAccounts, setAllAccounts] = useState([]); // [{id, metaId, name, currency, timezone}]
+  const [allAccounts, setAllAccounts] = useState([]);
   const [loadingAccs, setLoadingAccs] = useState(false);
   const [accountsError, setAccountsError] = useState('');
 
-  // ── Dates ─────────────────────────────────────────────────────────────────
   const [startDate, setStartDate] = useState(firstOfMonth());
   const [endDate,   setEndDate]   = useState(todayStr());
 
-  // ── Data ──────────────────────────────────────────────────────────────────
-  // rows are unified: { accountId, name, currency, totalSpend, todaySpend, yesterdaySpend }
-  // — spend values are in the account's NATIVE currency. The combined view
-  // applies FX to USD rows to express everything in ZAR.
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -96,17 +100,14 @@ export default function MetaTab() {
   const [lastRefresh, setLastRefresh] = useState(null);
   const [ranDates, setRanDates] = useState({ start: '', end: '' });
 
-  // ── Sub-tabs & FX ─────────────────────────────────────────────────────────
   const TABS = ['USD Accounts', 'ZAR Accounts', 'Combined (ZAR)'];
   const [activeTab, setActiveTab] = useState('Combined (ZAR)');
   const [fxRate, setFxRate] = useState(DEFAULT_FX);
 
-  // ── Search ────────────────────────────────────────────────────────────────
   const [search, setSearch] = useState('');
 
   const datesChanged = hasRun && (ranDates.start !== startDate || ranDates.end !== endDate);
 
-  // ── Fetch all Meta accounts on mount ─────────────────────────────────────
   useEffect(() => {
     if (!session) return;
     setLoadingAccs(true);
@@ -129,11 +130,6 @@ export default function MetaTab() {
       });
   }, [session]);
 
-  // ── Run Report ────────────────────────────────────────────────────────────
-  // Two batched calls — one per currency group — because /api/meta/pacing
-  // sums spend in the account's native currency. Calling it with mixed
-  // currencies in one shot would conflate USD+ZAR in the daily totals,
-  // which we don't want even though the per-account values come back correctly.
   async function runReport() {
     if (!allAccounts.length) {
       setError('Account list not loaded yet — wait a moment, then try again.');
@@ -203,9 +199,6 @@ export default function MetaTab() {
     setLoading(false);
   }
 
-  // ── View rows: filter by sub-tab, then by search, then convert if Combined ──
-  // For Combined (ZAR): USD rows are converted to ZAR with `fxRate`,
-  // ZAR rows pass through. Currency column shows the source.
   const fx = Number(fxRate) || DEFAULT_FX;
   function projectRow(r) {
     if (activeTab !== 'Combined (ZAR)') return { ...r, dispCurrency: r.currency };
@@ -226,7 +219,7 @@ export default function MetaTab() {
   const tabRows = (() => {
     if (activeTab === 'USD Accounts') return rows.filter(r => r.currency === 'USD');
     if (activeTab === 'ZAR Accounts') return rows.filter(r => r.currency === 'ZAR');
-    return rows; // Combined
+    return rows;
   })().map(projectRow);
 
   const searchedRows = search
@@ -237,13 +230,11 @@ export default function MetaTab() {
       })
     : tabRows;
 
-  // Per-row DoD + flag
   const computed = searchedRows.map(r => {
     const d = dod(r.todaySpend, r.yesterdaySpend);
     return { ...r, dod: d, flagged: isFlagged(d) };
   });
 
-  // Portfolio totals across the visible sub-tab
   const totals = computed.reduce((t, r) => ({
     total:     t.total     + (r.totalSpend     || 0),
     today:     t.today     + (r.todaySpend     || 0),
@@ -255,14 +246,12 @@ export default function MetaTab() {
 
   const tabSymbol = activeTab === 'USD Accounts' ? '$' : 'R';
 
-  // Tab counts
   const tabCounts = {
     'USD Accounts':    rows.filter(r => r.currency === 'USD').length,
     'ZAR Accounts':    rows.filter(r => r.currency === 'ZAR').length,
     'Combined (ZAR)':  rows.length,
   };
 
-  // ── Excel export ──────────────────────────────────────────────────────────
   async function exportToExcel() {
     const XLSX = await loadXLSX();
     const header = ['Account ID', 'Account Name', 'Currency', `Total (${activeTab === 'USD Accounts' ? 'USD' : 'ZAR'})`,
@@ -288,7 +277,6 @@ export default function MetaTab() {
     ]);
     const ws = XLSX.utils.aoa_to_sheet(data);
     ws['!cols'] = [{wch:14},{wch:40},{wch:14},{wch:16},{wch:14},{wch:14},{wch:12},{wch:10}];
-    // Number formats
     const range = XLSX.utils.decode_range(ws['!ref']);
     for (let R = 1; R <= range.e.r; R++) {
       ['D','E','F'].forEach(col => {
@@ -304,14 +292,11 @@ export default function MetaTab() {
     XLSX.writeFile(wb, `Meta_${tag}_${startDate}_to_${endDate}.xlsx`);
   }
 
-  // ════════════════════════════════════════════════════════════════════════
   return (
     <div className="flex flex-col h-full bg-slate-900">
 
-      {/* ══ TOP BAR ══ */}
       <div className="bg-slate-800 border-b border-slate-700 px-4 py-2.5 flex items-center gap-3 flex-wrap shrink-0">
 
-        {/* Account count */}
         <div className="flex items-center gap-2">
           <span className="text-xs text-slate-400 font-medium shrink-0">Meta Accounts</span>
           <span className="text-xs text-slate-500">
@@ -331,7 +316,6 @@ export default function MetaTab() {
 
         <div className="w-px h-5 bg-slate-600" />
 
-        {/* Date pickers */}
         <span className="text-xs text-slate-400 font-medium">From</span>
         <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
           className="px-2.5 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
@@ -339,7 +323,6 @@ export default function MetaTab() {
         <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
           className="px-2.5 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white focus:outline-none focus:border-blue-500" />
 
-        {/* Quick date ranges */}
         {[
           { label: 'This Month', fn: () => { setStartDate(firstOfMonth()); setEndDate(todayStr()); } },
           { label: 'Last Month', fn: () => { setStartDate(lastMonthStart()); setEndDate(lastMonthEnd()); } },
@@ -350,7 +333,6 @@ export default function MetaTab() {
           </button>
         ))}
 
-        {/* Run button */}
         <button onClick={runReport} disabled={loading || loadingAccs || !allAccounts.length}
           className={`flex items-center gap-2 px-4 py-1.5 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-colors ${
             datesChanged ? 'bg-amber-600 hover:bg-amber-500 animate-pulse' : 'bg-blue-600 hover:bg-blue-500'
@@ -361,7 +343,6 @@ export default function MetaTab() {
 
         <div className="flex-1" />
 
-        {/* FX rate input — only shown / relevant on Combined tab */}
         {activeTab === 'Combined (ZAR)' && (
           <div className="flex items-center gap-1.5 bg-slate-700/60 border border-slate-600 rounded-lg px-2.5 py-1">
             <span className="text-xs text-slate-400">FX</span>
@@ -373,21 +354,18 @@ export default function MetaTab() {
           </div>
         )}
 
-        {/* Search */}
         <div className="relative">
           <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-1/2 -translate-y-1/2" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search ID or name…"
             className="pl-7 pr-2 py-1.5 bg-slate-700 border border-slate-600 rounded-lg text-xs text-white w-48 focus:outline-none focus:border-blue-500" />
         </div>
 
-        {/* Export */}
         <button disabled={computed.length === 0} onClick={exportToExcel}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white rounded-lg text-xs font-bold transition-colors">
           <FileSpreadsheet className="w-3.5 h-3.5" /> Export Excel
         </button>
       </div>
 
-      {/* ══ PROGRESS / ERROR ══ */}
       {(loading || (hasRun && progress.message)) && (
         <div className="bg-slate-800/80 border-b border-slate-700 px-4 py-2 shrink-0">
           <div className="flex items-center gap-3">
@@ -405,7 +383,6 @@ export default function MetaTab() {
         </div>
       )}
 
-      {/* ══ PORTFOLIO TOTALS STRIP ══ */}
       {computed.length > 0 && (
         <div className={`border-b border-slate-700 px-4 py-2 flex items-center gap-5 flex-wrap shrink-0 transition-colors ${
           portfolioFlagged ? 'bg-red-950/60' : 'bg-slate-800/50'
@@ -449,7 +426,6 @@ export default function MetaTab() {
         </div>
       )}
 
-      {/* ══ SUB-TABS ══ */}
       <div className="bg-slate-800/60 border-b border-slate-700 px-4 py-1.5 flex items-center gap-1.5 shrink-0">
         {TABS.map(tab => {
           const isActive = activeTab === tab;
@@ -473,7 +449,6 @@ export default function MetaTab() {
         })}
       </div>
 
-      {/* ══ TABLE ══ */}
       <div className="flex-1 overflow-auto">
         {computed.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-slate-500 text-sm gap-2">
