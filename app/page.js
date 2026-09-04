@@ -1527,8 +1527,14 @@ export default function PacingDashboard() {
   const cbInitialized = React.useRef(false);
 
   async function loadClientBreakdownRanges() {
-    const zarIds = new Set(accounts.filter(a => detectCurrency(a) === 'ZAR').map(a => String(a.id)));
-    const activeIds = selectedAccounts.filter(id => !excludedAccounts.includes(id) && !zarIds.has(String(id)));
+    // NOTE: unlike loadPacing()/loadLastMonth()/loadPrevPeriod() (which feed
+    // the single-currency USD summary cards and daily chart, so ZAR must be
+    // excluded there to avoid mixing currencies into one sum), this table
+    // shows each account's own total individually — LinkedIn's API already
+    // returns each account's spend in its own local billing currency. So
+    // ZAR accounts are included here to get their real R-denominated
+    // totals, instead of always showing R0.00.
+    const activeIds = selectedAccounts.filter(id => !excludedAccounts.includes(id));
     if (activeIds.length === 0) return;
     setCbLoading(true);
     try {
