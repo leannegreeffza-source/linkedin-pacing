@@ -9,7 +9,11 @@ export const dynamic = 'force-dynamic';
 // multiple Business Managers). Matches the same override already used on
 // /api/kenya and /api/bod for the same reason.
 export const maxDuration = 300;
-const MAX_PARALLEL = 4;
+// Matches the concurrency level already proven safe on the LinkedIn pacing
+// route (app/api/pacing/route.js) for much larger account lists. At 4, 410
+// Meta accounts meant ~103 sequential batches, which was exceeding even the
+// 300s maxDuration above.
+const MAX_PARALLEL = 10;
 
 // FIX: previously used new Date().toISOString() which reads the SERVER's
 // UTC clock. Vercel functions run in UTC, so between 00:00-01:59 SAST the
