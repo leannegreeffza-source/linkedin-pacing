@@ -4,6 +4,11 @@ import { NextResponse } from 'next/server';
 import { getInsights, resolveToken } from '../../../../lib/metaClient';
 
 export const dynamic = 'force-dynamic';
+// Without this, Vercel's default function timeout applies, which is far too
+// short for 179+ Meta accounts (more once Marius's session pulls from
+// multiple Business Managers). Matches the same override already used on
+// /api/kenya and /api/bod for the same reason.
+export const maxDuration = 300;
 const MAX_PARALLEL = 4;
 
 // FIX: previously used new Date().toISOString() which reads the SERVER's
