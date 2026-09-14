@@ -1189,17 +1189,16 @@ export default function PacingDashboard() {
 
   async function loadExclusions() {
     try {
-      // Single source of truth: the uploaded exclusion file stored in localStorage.
-      // Manual per-account server exclusions are no longer used — the uploaded
-      // list is the only thing that drives what gets excluded.
-      let uploaded = [];
-      try { uploaded = JSON.parse(localStorage.getItem('pacing_uploaded_excl') || '[]'); } catch {}
-      // Normalize to strings to prevent type mismatches with account IDs from the API
-      const normalized = uploaded.map(String);
+      // Single source of truth: the shared exclusion list stored server-side
+      // (Vercel Blob) via /api/exclusions — the same list every logged-in
+      // user sees, uploaded once and applied to everyone.
+      const res = await fetch('/api/exclusions', { cache: 'no-store' });
+      const data = res.ok ? await res.json() : { ids: [] };
+      const normalized = (data.ids || []).map(String);
       excludedRef.current = normalized;
       setExcludedAccounts(normalized);
       setUploadedExclusions(normalized);
-    } catch (err) {}
+    } catch (err) { console.error('[exclusions] load failed:', err); }
   }
 
   function saveExclusions(newExclusions) {
@@ -1234,22 +1233,33 @@ export default function PacingDashboard() {
       });
       // Normalize to strings — prevents type mismatch with numeric API account IDs
       const unique = [...new Set(ids.map(String))];
-      localStorage.setItem('pacing_uploaded_excl', JSON.stringify(unique));
+
+      // Save to the shared server-side store (Vercel Blob) — applies to every
+      // logged-in user, not just this browser.
+      const res = await fetch('/api/exclusions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: unique, updatedBy: session?.user?.email || session?.user?.name || 'unknown' }),
+      });
+      if (!res.ok) throw new Error('Server rejected the exclusion list');
+
       setUploadedExclusions(unique);
       excludedRef.current = unique;
       setExcludedAccounts(unique);
       // Remove newly excluded accounts from selected immediately
       setSelectedAccounts(prev => prev.filter(id => !unique.includes(String(id))));
-      alert(`Loaded ${unique.length} account IDs from exclusion list`);
+      alert(`Loaded ${unique.length} account IDs from exclusion list — now excluded for everyone`);
     } catch (err) {
-      alert('Failed to parse file. Use a CSV or Excel file with account IDs.');
+      alert('Failed to parse or save the exclusion list. Use a CSV or Excel file with account IDs.');
     }
     setUploadingExcl(false);
     if (exclusionFileRef.current) exclusionFileRef.current.value = '';
   }
 
-  function clearUploadedExclusions() {
-    localStorage.removeItem('pacing_uploaded_excl');
+  async function clearUploadedExclusions() {
+    try {
+      await fetch('/api/exclusions', { method: 'DELETE' });
+    } catch (err) { console.error('[exclusions] clear failed:', err); }
     setUploadedExclusions([]);
     excludedRef.current = [];
     setExcludedAccounts([]);
