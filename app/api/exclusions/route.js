@@ -1,22 +1,30 @@
-import { put, list } from '@vercel/blob';
+import { put, get } from '@vercel/blob';
 
 export const dynamic = 'force-dynamic';
 
 // Single shared exclusion list for everyone who logs into the account.
 // Stored as one JSON blob at a fixed pathname (addRandomSuffix: false) so
 // every upload overwrites the same file rather than creating a new one.
+//
+// NOTE: this store is PRIVATE (Vercel's current Blob stores don't offer a
+// public option), so reads must go through the authenticated get() SDK
+// method rather than a plain fetch() of a public URL.
 const EXCLUSION_PATHNAME = 'exclusions/account-exclusions.json';
 
 async function readExclusions() {
   try {
-    const { blobs } = await list({ prefix: EXCLUSION_PATHNAME });
-    const match = blobs.find(b => b.pathname === EXCLUSION_PATHNAME);
-    if (!match) return { ids: [], updatedAt: null, updatedBy: null };
-    const res = await fetch(match.url, { cache: 'no-store' });
-    if (!res.ok) return { ids: [], updatedAt: null, updatedBy: null };
-    return await res.json();
+    // useCache: false — guarantees we read the just-written version rather
+    // than a CDN-cached copy of the previous upload (cache can lag up to
+    // 60s on overwrite otherwise).
+    const result = await get(EXCLUSION_PATHNAME, { access: 'private', useCache: false });
+    if (!result?.stream) return { ids: [], updatedAt: null, updatedBy: null };
+    const text = await new Response(result.stream).text();
+    return JSON.parse(text);
   } catch (err) {
-    console.error('[exclusions] read error:', err);
+    // Not found on first-ever run is expected — everything else gets logged.
+    if (err?.message && !err.message.includes('not found')) {
+      console.error('[exclusions] read error:', err);
+    }
     return { ids: [], updatedAt: null, updatedBy: null };
   }
 }
@@ -40,7 +48,7 @@ export async function POST(request) {
       updatedBy: updatedBy || 'unknown',
     });
     await put(EXCLUSION_PATHNAME, payload, {
-      access: 'public',
+      access: 'private',
       addRandomSuffix: false,
       allowOverwrite: true,
       contentType: 'application/json',
@@ -57,7 +65,7 @@ export async function DELETE() {
   try {
     const payload = JSON.stringify({ ids: [], updatedAt: new Date().toISOString(), updatedBy: null });
     await put(EXCLUSION_PATHNAME, payload, {
-      access: 'public',
+      access: 'private',
       addRandomSuffix: false,
       allowOverwrite: true,
       contentType: 'application/json',
