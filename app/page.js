@@ -1064,7 +1064,7 @@ export default function PacingDashboard() {
 
   // Budget
   const [budget, setBudget] = useState({ totalUSD: '', totalZAR: '', note: '' });
-  const [activeTab, setActiveTab] = useState('pacing'); // 'pacing' | 'bod' | 'bod2' | 'kenya' | 'meta' | 'development'
+  const [activeTab, setActiveTab] = useState('pacing'); // 'pacing' | 'bod2' | 'kenya' | 'meta' | 'development'
 
   // ── Development tab access gate ─────────────────────────────────────────
   // Client-side code check only — not real security, just a deterrent to
@@ -1074,7 +1074,7 @@ export default function PacingDashboard() {
   const [showDevPrompt, setShowDevPrompt] = useState(false);
   const [devCodeInput, setDevCodeInput] = useState('');
   const [devError, setDevError] = useState('');
-  const [devSubTab, setDevSubTab] = useState('pacingReporting'); // more sub-tabs land here later
+  const [devSubTab, setDevSubTab] = useState('pacingReporting'); // 'pacingReporting' | 'bodReport'
 
   function handleDevTabClick() {
     if (devUnlocked) { setActiveTab('development'); return; }
@@ -1116,7 +1116,7 @@ export default function PacingDashboard() {
     // BOD / BOD2 / Kenya are LinkedIn-only; Meta tab is Meta-only.
     // When platform changes, drop the user back to 'pacing' if they were on a tab
     // that isn't available for the newly-selected platform.
-    if (platform === 'meta'    && ['bod','bod2','kenya'].includes(activeTab)) setActiveTab('pacing');
+    if (platform === 'meta'    && ['bod2','kenya'].includes(activeTab)) setActiveTab('pacing');
     if (platform === 'linkedin' && activeTab === 'meta')                       setActiveTab('pacing');
   }, [platform]);
   const apiPrefix = platform === 'meta' ? '/api/meta' : '/api';
@@ -1752,22 +1752,13 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
               {platform === 'linkedin' && (
                 <>
                   <button
-                    onClick={() => setActiveTab('bod')}
-                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                      activeTab === 'bod'
-                        ? 'bg-blue-600 text-white shadow'
-                        : 'text-slate-400 hover:text-white'
-                    }`}>
-                    BOD Report
-                  </button>
-                  <button
                     onClick={() => setActiveTab('bod2')}
                     className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
                       activeTab === 'bod2'
                         ? 'bg-cyan-600 text-white shadow'
                         : 'text-slate-400 hover:text-white'
                     }`}>
-                    BOD 2
+                    BOD
                   </button>
                   <button
                     onClick={() => setActiveTab('kenya')}
@@ -2574,7 +2565,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
 
       )} {/* end activeTab === 'pacing' */}
 
-      {/* ── Development Tab (gated) — currently just Pacing Reporting ── */}
+      {/* ── Development Tab (gated) — Pacing Reporting + BOD Report ── */}
       {activeTab === 'development' && devUnlocked && (
       <>
         <div className="max-w-screen-xl mx-auto px-6 pt-6">
@@ -2587,6 +2578,15 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                   : 'text-slate-400 hover:text-white'
               }`}>
               Pacing Reporting
+            </button>
+            <button
+              onClick={() => setDevSubTab('bodReport')}
+              className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                devSubTab === 'bodReport'
+                  ? 'bg-blue-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}>
+              BOD Report
             </button>
           </div>
         </div>
@@ -3266,15 +3266,14 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
       </div>
 
       )} {/* end devSubTab === 'pacingReporting' */}
-      </>
-      )} {/* end activeTab === 'development' */}
 
-      {/* ── BOD Tab ── */}
-      {activeTab === 'bod' && (
+      {devSubTab === 'bodReport' && (
         <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
           <BODTab />
         </div>
       )}
+      </>
+      )} {/* end activeTab === 'development' */}
 
       {/* ── BOD 2 Tab — Deduplication account spend ── */}
       {activeTab === 'bod2' && (
