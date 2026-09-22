@@ -11,7 +11,8 @@ import {
   TrendingUp, TrendingDown, DollarSign, RefreshCw,
   CheckCircle, AlertCircle, XCircle, Edit3, Save, X,
   ChevronUp, ChevronDown, Users, Calendar, Target, Minus, Search, Lock,
-  EyeOff, Eye, Download, FileText, Sparkles, FileSpreadsheet, Upload, Activity
+  EyeOff, Eye, Download, FileText, Sparkles, FileSpreadsheet, Upload, Activity,
+  ExternalLink
 } from 'lucide-react';
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -750,7 +751,8 @@ function MetricsBar({ totalSpend, totalImpressions, totalClicks, prevData, showC
 }
 
 // ── AccountDrillDown — single account detail view ─────────────────────────────
-function AccountDrillDown({ account, totals, onBack, idealDailySpend, budgetUSD, budgetMonth, budgetYear }) {
+function AccountDrillDown({ account, totals, onBack, idealDailySpend, budgetUSD, budgetMonth, budgetYear,
+  lastMonthTotals, lastMonthLabel, daysElapsed, lastMonthDaysNum, showLinkedInLink }) {
   const spend       = totals?.totalSpend || 0;
   const impressions = totals?.totalImpressions || 0;
   const clicks      = totals?.totalClicks || 0;
@@ -766,23 +768,50 @@ function AccountDrillDown({ account, totals, onBack, idealDailySpend, budgetUSD,
   const daysInMonthDD = (budgetYear && budgetMonth) ? new Date(budgetYear, budgetMonth, 0).getDate() : 30;
   const dailyTargetUSD = budgetUSD > 0 ? budgetUSD / daysInMonthDD : 0;
 
+  // ── vs last month (Development-tab test feature; only populated when
+  // lastMonthTotals is passed in, so the main Pacing tab's drill-down is
+  // completely unaffected) ──────────────────────────────────────────────
+  const lastMonthSpend = lastMonthTotals?.totalSpend || 0;
+  const vsLastMonthPct = lastMonthSpend > 0 ? ((spend - lastMonthSpend) / lastMonthSpend) * 100 : null;
+  const de  = daysElapsed || dailyData.length || 1;
+  const lmd = lastMonthDaysNum || 30;
+  const avgThisDaily = de > 0 ? spend / de : 0;
+  const avgLastDaily = lastMonthSpend > 0 && lmd > 0 ? lastMonthSpend / lmd : 0;
+  const linkedInUrl = `https://www.linkedin.com/campaignmanager/accounts/${account.id}/campaigns`;
+
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <button onClick={onBack}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs font-medium transition-colors">
-          ← All Clients
-        </button>
-        <div>
-          <h2 className="text-lg font-bold text-white">{account.name}</h2>
-          <div className="text-xs text-slate-500 font-mono">ID: {account.id}</div>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs font-medium transition-colors">
+            ← All Clients
+          </button>
+          <div>
+            <h2 className="text-lg font-bold text-white">{account.name}</h2>
+            <div className="text-xs text-slate-500 font-mono">ID: {account.id}</div>
+          </div>
         </div>
+        {showLinkedInLink && (
+          <a href={linkedInUrl} target="_blank" rel="noopener noreferrer"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition-colors">
+            Open in LinkedIn <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        )}
       </div>
 
       {/* Metrics row */}
       <div className="grid grid-cols-5 gap-3">
+        <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+          <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Spend</div>
+          <div className="text-xl font-bold text-white">{fmtD(spend)}</div>
+          {vsLastMonthPct !== null && (
+            <div className={`text-xs font-semibold mt-1 ${vsLastMonthPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {vsLastMonthPct >= 0 ? '+' : ''}{vsLastMonthPct.toFixed(1)}% vs {lastMonthLabel || 'last month'}
+            </div>
+          )}
+        </div>
         {[
-          { label: 'Spend', value: fmtD(spend) },
           { label: 'Impressions', value: impressions.toLocaleString() },
           { label: 'Clicks', value: clicks.toLocaleString() },
           { label: 'CTR', value: `${ctr.toFixed(2)}%` },
@@ -805,6 +834,20 @@ function AccountDrillDown({ account, totals, onBack, idealDailySpend, budgetUSD,
           </div>
         ))}
       </div>
+
+      {/* Avg daily spend vs last month — only shown when last-month data was passed in */}
+      {lastMonthTotals != null && (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Avg Daily Spend (This Period)</div>
+            <div className="text-xl font-bold text-white">{fmtD(avgThisDaily)}</div>
+          </div>
+          <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Avg Daily Spend ({lastMonthLabel || 'Last Month'})</div>
+            <div className="text-xl font-bold text-white">{lastMonthSpend > 0 ? fmtD(avgLastDaily) : '—'}</div>
+          </div>
+        </div>
+      )}
 
       {/* Daily chart for this account */}
       <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
@@ -3085,6 +3128,11 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                   budgetUSD={budgetUSD}
                   budgetMonth={budgetMonth}
                   budgetYear={budgetYear}
+                  lastMonthTotals={cbDataB?.accountTotals?.find(t => t.accountId === drillAccount.id)}
+                  lastMonthLabel={`${cbStartB} → ${cbEndB}`}
+                  daysElapsed={cbDaysA}
+                  lastMonthDaysNum={cbDaysB}
+                  showLinkedInLink={true}
                 />
               ) : (
                 <>
