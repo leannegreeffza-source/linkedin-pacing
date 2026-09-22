@@ -73,7 +73,7 @@ function firstOfMonth() {
 
 // ── FilterSection ─────────────────────────────────────────────────────────────
 // ── ClientTable ───────────────────────────────────────────────────────────────
-function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClick, daysElapsed, lastMonthDays, labelA = 'Period A', labelB = 'Period B' }) {
+function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClick, daysElapsed, lastMonthDays, labelA = 'Period A', labelB = 'Period B', highlightSpikes = false }) {
   const [search, setSearch] = React.useState('');
   const filtered = !search ? rows
     : rows.filter(r => r.name.toLowerCase().includes(search.toLowerCase()) || String(r.id).includes(search));
@@ -100,6 +100,12 @@ function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClic
               New in {labelA} (no spend in {labelB})
             </div>
           )}
+          {highlightSpikes && rows.some(r => r.hasSpendSpike) && (
+            <div className="flex items-center gap-1.5 text-xs text-yellow-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 flex-shrink-0" />
+              Daily spend jumped 25%+ in a single day
+            </div>
+          )}
         </div>
       )}
       {rows.length === 0
@@ -122,14 +128,16 @@ function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClic
                 const avgLast = lmd > 0 ? (client.periodBSpend || 0) / lmd : 0;
                 const vsLast  = client.periodBSpend > 0
                   ? ((client.periodASpend - client.periodBSpend) / client.periodBSpend) * 100 : null;
+                const isSpike = highlightSpikes && client.hasSpendSpike;
                 return (
                   <tr key={client.id}
-                    className={`border-b border-slate-700/50 ${client.isNewSpender ? 'bg-red-900/20 hover:bg-red-900/30' : i % 2 !== 0 ? 'bg-slate-700/20 hover:bg-slate-700/40' : 'hover:bg-slate-700/40'} cursor-pointer`}
+                    className={`border-b border-slate-700/50 ${isSpike ? 'bg-yellow-400/25 hover:bg-yellow-400/35' : client.isNewSpender ? 'bg-red-900/20 hover:bg-red-900/30' : i % 2 !== 0 ? 'bg-slate-700/20 hover:bg-slate-700/40' : 'hover:bg-slate-700/40'} cursor-pointer`}
                     onClick={() => onRowClick(client)}>
                     <td className="py-2.5 pr-4 max-w-xs">
                       <div className="flex items-center gap-1.5">
+                        {isSpike && <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 flex-shrink-0" title={`+${client.spikePct.toFixed(0)}% spend spike on ${client.spikeDay}`} />}
                         {client.isNewSpender && <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" title="New spender this period" />}
-                        <div className={`font-semibold text-xs truncate hover:text-blue-300 ${client.isNewSpender ? 'text-red-300' : 'text-white'}`}>{client.name}</div>
+                        <div className={`font-semibold text-xs truncate hover:text-blue-300 ${isSpike ? 'text-yellow-200' : client.isNewSpender ? 'text-red-300' : 'text-white'}`}>{client.name}</div>
                       </div>
                     </td>
                     <td className="py-2.5 pr-4"><div className="text-xs text-slate-400 font-mono">{client.id}</div></td>
@@ -138,6 +146,11 @@ function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClic
                       {vsLast !== null && (
                         <div className={`text-xs font-mono ${vsLast >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                           {vsLast >= 0 ? '+' : ''}{vsLast.toFixed(1)}% vs {labelB}
+                        </div>
+                      )}
+                      {isSpike && (
+                        <div className="text-xs font-mono text-yellow-300 font-semibold">
+                          +{client.spikePct.toFixed(0)}% on {client.spikeDay}
                         </div>
                       )}
                     </td>
@@ -1658,6 +1671,24 @@ export default function PacingDashboard() {
       const clk   = totalsA?.totalClicks || 0;
       const totalsB = cbDataB?.accountTotals?.find(t => t.accountId === a.id);
       const periodBSpend = totalsB?.totalSpend || 0;
+
+      // Day-over-day spend spike detection (Development-tab test feature):
+      // flag the account if any single day's spend jumped 25%+ vs the day
+      // before it, within the current period's daily series.
+      const ddData = totalsA?.dailyData || [];
+      let spikeDay = null, spikePct = 0;
+      for (let i = 1; i < ddData.length; i++) {
+        const prevSpend = ddData[i - 1]?.spend || 0;
+        const currSpend = ddData[i]?.spend || 0;
+        if (prevSpend > 0) {
+          const pctChange = ((currSpend - prevSpend) / prevSpend) * 100;
+          if (pctChange >= 25 && pctChange > spikePct) {
+            spikePct = pctChange;
+            spikeDay = ddData[i].date;
+          }
+        }
+      }
+
       return {
         ...a,
         currency: detectCurrency(a),
@@ -1676,6 +1707,9 @@ export default function PacingDashboard() {
         improved: (totalsA?.todaySpend || 0) >= (totalsA?.yesterdaySpend || 0),
         lastMonthSpend: periodBSpend,
         isNewSpender: cbDataB != null && periodASpend > 0 && periodBSpend === 0,
+        hasSpendSpike: spikeDay !== null,
+        spikeDay,
+        spikePct,
       };
     })
     .filter(c => c.periodASpend > 0 || c.currency === 'ZAR') // show ZAR accounts even with 0 spend (excluded from API)
@@ -3240,14 +3274,14 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                               <span className="text-xs font-bold text-yellow-400 uppercase tracking-wide px-2 py-1 rounded bg-yellow-900/30 border border-yellow-700">ZAR Accounts</span>
                               <span className="text-xs text-slate-500">{zarClientRows.length} client{zarClientRows.length !== 1 ? 's' : ''}</span>
                             </div>
-                            <ClientTable rows={zarClientRows} currencySymbol="R" fmtCur={fmtR} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={cbDaysA} lastMonthDays={cbDaysB} labelA={`${cbStartA} → ${cbEndA}`} labelB={`${cbStartB} → ${cbEndB}`} />
+                            <ClientTable rows={zarClientRows} currencySymbol="R" fmtCur={fmtR} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={cbDaysA} lastMonthDays={cbDaysB} labelA={`${cbStartA} → ${cbEndA}`} labelB={`${cbStartB} → ${cbEndB}`} highlightSpikes={true} />
                           </div>
                           <div>
                             <div className="flex items-center gap-2 mb-3">
                               <span className="text-xs font-bold text-emerald-400 uppercase tracking-wide px-2 py-1 rounded bg-emerald-900/30 border border-emerald-700">USD Accounts</span>
                               <span className="text-xs text-slate-500">{usdClientRows.length} client{usdClientRows.length !== 1 ? 's' : ''}</span>
                             </div>
-                            <ClientTable rows={usdClientRows} currencySymbol="$" fmtCur={fmtD} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={cbDaysA} lastMonthDays={cbDaysB} labelA={`${cbStartA} → ${cbEndA}`} labelB={`${cbStartB} → ${cbEndB}`} />
+                            <ClientTable rows={usdClientRows} currencySymbol="$" fmtCur={fmtD} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={cbDaysA} lastMonthDays={cbDaysB} labelA={`${cbStartA} → ${cbEndA}`} labelB={`${cbStartB} → ${cbEndB}`} highlightSpikes={true} />
                           </div>
                         </div>
                       )
