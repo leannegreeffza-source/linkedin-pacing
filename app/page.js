@@ -103,7 +103,7 @@ function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClic
           {highlightSpikes && rows.some(r => r.hasSpendSpike) && (
             <div className="flex items-center gap-1.5 text-xs text-yellow-300">
               <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 flex-shrink-0" />
-              Yesterday's spend is 25%+ above the day before
+              Yesterday's spend is 50%+ above the day before
             </div>
           )}
         </div>
@@ -1684,7 +1684,7 @@ export default function PacingDashboard() {
       let spikeDay = null, spikePct = 0;
       if (dayBeforeSpendForSpike > 0) {
         const pctChange = ((yestSpendForSpike - dayBeforeSpendForSpike) / dayBeforeSpendForSpike) * 100;
-        if (pctChange > 25) {
+        if (pctChange > 50) {
           spikePct = pctChange;
           spikeDay = yestDateStr;
         }
