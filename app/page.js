@@ -103,7 +103,7 @@ function ClientTable({ rows, currencySymbol, fmtCur, calcCTR, calcCPC, onRowClic
           {highlightSpikes && rows.some(r => r.hasSpendSpike) && (
             <div className="flex items-center gap-1.5 text-xs text-yellow-300">
               <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 flex-shrink-0" />
-              Daily spend jumped 25%+ in a single day
+              Yesterday's spend is 25%+ above the day before
             </div>
           )}
         </div>
@@ -1673,19 +1673,20 @@ export default function PacingDashboard() {
       const periodBSpend = totalsB?.totalSpend || 0;
 
       // Day-over-day spend spike detection (Development-tab test feature):
-      // flag the account if any single day's spend jumped 25%+ vs the day
-      // before it, within the current period's daily series.
+      // flag the account if yesterday's spend jumped 25%+ vs the day before
+      // yesterday, looked up by actual calendar date (not array position) so
+      // it's correct regardless of where those two days fall in the period.
       const ddData = totalsA?.dailyData || [];
+      const yestDateStr      = toDateInput(new Date(Date.now() - 1 * 86400000));
+      const dayBeforeDateStr = toDateInput(new Date(Date.now() - 2 * 86400000));
+      const yestSpendForSpike      = ddData.find(d => d.date === yestDateStr)?.spend || 0;
+      const dayBeforeSpendForSpike = ddData.find(d => d.date === dayBeforeDateStr)?.spend || 0;
       let spikeDay = null, spikePct = 0;
-      for (let i = 1; i < ddData.length; i++) {
-        const prevSpend = ddData[i - 1]?.spend || 0;
-        const currSpend = ddData[i]?.spend || 0;
-        if (prevSpend > 0) {
-          const pctChange = ((currSpend - prevSpend) / prevSpend) * 100;
-          if (pctChange >= 25 && pctChange > spikePct) {
-            spikePct = pctChange;
-            spikeDay = ddData[i].date;
-          }
+      if (dayBeforeSpendForSpike > 0) {
+        const pctChange = ((yestSpendForSpike - dayBeforeSpendForSpike) / dayBeforeSpendForSpike) * 100;
+        if (pctChange > 25) {
+          spikePct = pctChange;
+          spikeDay = yestDateStr;
         }
       }
 
