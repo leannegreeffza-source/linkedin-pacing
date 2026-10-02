@@ -3358,10 +3358,13 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
       </>
       )} {/* end activeTab === 'development' */}
 
-      {/* ── BOD 2 Tab — Deduplication account spend ── */}
+      {/* ── BOD Tab (main nav) — now uses the same, correct BODTab component ──
+          as the Development tab's "BOD Report" sub-tab, instead of the old
+          separate BOD2Tab.js, so there's one report instead of two drifting
+          copies. BOD2Tab.js is left in the repo but no longer rendered here. */}
       {activeTab === 'bod2' && (
         <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
-          <BOD2Tab />
+          <BODTab />
         </div>
       )}
 
