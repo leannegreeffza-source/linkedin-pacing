@@ -116,8 +116,37 @@ async function getAccountCampaignSpend(accountId, dateStr, token) {
   }
 }
 
+// ── Ad (creative) names for a batch of campaigns ───────────────────────────
+// Only called for dedup-list runs (a much smaller account set) since fetching
+// creative detail for every campaign on the full account list would blow
+// past Vercel's time limit. Ad-name availability depends on creative type —
+// some Sponsored Content ads don't carry an explicit name, in which case
+// that creative is simply skipped.
+async function getCampaignAdNames(campaignIds, token) {
+  const adNamesByCampaign = {};
+  await pooled(campaignIds, 5, async cid => {
+    try {
+      const names = [];
+      for (let s = 0; s < 500; s += 100) {
+        const d = await liGet(
+          `https://api.linkedin.com/v2/adCreativesV2?q=search` +
+          `&search.campaign.values[0]=${encodeURIComponent(`urn:li:sponsoredCampaign:${cid}`)}&count=100&start=${s}`, token
+        );
+        const els = d?.elements || [];
+        els.forEach(el => { if (el.name) names.push(el.name); });
+        if (els.length < 100) break;
+      }
+      adNamesByCampaign[cid] = names;
+    } catch (err) {
+      console.error(`[BOD] getCampaignAdNames ${cid}:`, err.message);
+      adNamesByCampaign[cid] = [];
+    }
+  });
+  return adNamesByCampaign;
+}
+
 // ── PHASE 2: Aggregate campaign spend to campaign-group level ─────────────────
-async function processAccount(accountId, dateStr, token) {
+async function processAccount(accountId, dateStr, token, fetchAdNames = false) {
   try {
     const { totalSpend, campaigns, spendMap } = await getAccountCampaignSpend(accountId, dateStr, token);
 
@@ -151,6 +180,14 @@ async function processAccount(accountId, dateStr, token) {
       };
     });
 
+    // Ad (creative) names — only fetched when the caller asked for them
+    // (dedup-list runs). Scoped to just the campaigns that actually have
+    // spend in this period, same as everything else in this phase.
+    let adNamesByCampaign = {};
+    if (fetchAdNames) {
+      adNamesByCampaign = await getCampaignAdNames(Object.keys(spendMap), token);
+    }
+
     // Aggregate spend to campaign-group level
     const groupAgg = {};
     Object.entries(spendMap).forEach(([cid, spend]) => {
@@ -158,11 +195,12 @@ async function processAccount(accountId, dateStr, token) {
       if (!m) return;
       const gid = m.gid || '0';
       if (!groupAgg[gid]) {
-        groupAgg[gid] = { gname: m.gname, spend: 0, campStart: m.campStart, campEnd: m.campEnd, adUnits: new Set(), campaignNames: new Set() };
+        groupAgg[gid] = { gname: m.gname, spend: 0, campStart: m.campStart, campEnd: m.campEnd, adUnits: new Set(), campaignNames: new Set(), adNames: new Set() };
       }
       groupAgg[gid].spend += spend;
       if (m.type)  groupAgg[gid].adUnits.add(m.type);
       if (m.cname) groupAgg[gid].campaignNames.add(m.cname);
+      (adNamesByCampaign[cid] || []).forEach(n => groupAgg[gid].adNames.add(n));
       if (m.campStart && (!groupAgg[gid].campStart || m.campStart < groupAgg[gid].campStart))
         groupAgg[gid].campStart = m.campStart;
       if (m.campEnd && (!groupAgg[gid].campEnd || m.campEnd > groupAgg[gid].campEnd))
@@ -179,6 +217,7 @@ async function processAccount(accountId, dateStr, token) {
         category: '', io: '', staffCode: '', billingAgency: '', bookingAgency: '',
         advertiser: '', industry: '', ciNumber: '', specialNotes: '',
         campaignName: [...v.campaignNames].join(', '),
+        adName: [...v.adNames].join(', '),
       }));
   } catch (err) {
     console.error(`[BOD] processAccount ${accountId}:`, err.message);
@@ -191,7 +230,7 @@ export async function POST(request) {
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });
   if (!token?.accessToken) return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 });
 
-  const { accountIds, startDate, endDate } = await request.json();
+  const { accountIds, startDate, endDate, fetchAdNames } = await request.json();
   if (!accountIds?.length) return new Response(JSON.stringify({ error: 'No accounts' }), { status: 400 });
 
   const now     = new Date();
@@ -242,7 +281,7 @@ export async function POST(request) {
         const rows = [];
 
         await pooled(accountsWithSpend, 5, async id => {
-          const accountRows = await processAccount(id, dateStr, token.accessToken);
+          const accountRows = await processAccount(id, dateStr, token.accessToken, !!fetchAdNames);
           rows.push(...accountRows);
           done++;
           if (done % 5 === 0 || done === detailTotal) {

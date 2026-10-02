@@ -48,6 +48,12 @@ const DEFAULT_FX = 18;
 // Export-only column: individual campaign/ad-set name. Deliberately NOT part of
 // COLS/SIMPLE_COLS so it never shows on the live table — only in the Excel export.
 const CAMPAIGN_NAME_COL = { key: 'campaignName', label: 'Campaign Name (Ad Set)', source: 'blue', w: 220 };
+// Export-only column: individual ad/creative name. Only populated by the
+// backend when the report was run with a Dedup List active (see runReport),
+// since fetching creative detail for every campaign on the full account
+// list would be too slow — so this is only injected into the export when
+// the most recent run actually fetched it.
+const AD_NAME_COL = { key: 'adName', label: 'Ad Name', source: 'blue', w: 220 };
 
 const SIMPLE_COLS = COLS.filter(c => c.source === 'blue');
 
@@ -390,6 +396,10 @@ export default function BODTab() {
   // ── Dedup list state ──────────────────────────────────────────────────────────
   const [dedupFile,     setDedupFile]     = useState(null);
   const [selectedSheet, setSelectedSheet] = useState('');
+  // Tracks whether the most recently RUN report used a dedup list — the
+  // backend only fetches Ad Name when this was true, so the export only
+  // adds that column when it actually has data to show.
+  const [lastRunUsedDedup, setLastRunUsedDedup] = useState(false);
 
   // ── Restore saved ref data on mount ──────────────────────────────────────────
   useEffect(() => {
@@ -447,8 +457,9 @@ export default function BODTab() {
       // never whether it's fetched or counted in All Spend.
       const platformIds = new Set(allAccounts.map(a => String(a.id)));
       let accountIdsToFetch;
+      const usingDedup = !!(dedupFile && selectedSheet);
 
-      if (dedupFile && selectedSheet) {
+      if (usingDedup) {
         const dedupIds = dedupFile.sheets[selectedSheet] || [];
         accountIdsToFetch = dedupIds.filter(id => platformIds.has(id));
         setProgress(p => ({ ...p, message: `Using dedup list "${selectedSheet}" — ${accountIdsToFetch.length} of ${dedupIds.length} accounts matched on platform…` }));
@@ -462,11 +473,17 @@ export default function BODTab() {
         return;
       }
 
+      // Ad Name is only fetched (backend-side) when a dedup list narrows the
+      // account set — fetching creative detail for every campaign on the
+      // full account list would be too slow. Tracked here so the export
+      // button knows whether this run's rows actually carry ad names.
+      setLastRunUsedDedup(usingDedup);
+
 
       const res = await fetch('/api/bod', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ accountIds: accountIdsToFetch, startDate, endDate }),
+        body:    JSON.stringify({ accountIds: accountIdsToFetch, startDate, endDate, fetchAdNames: usingDedup }),
       });
 
       if (!res.ok) {
@@ -929,9 +946,12 @@ export default function BODTab() {
         <button disabled={computedRows.length === 0}
           onClick={() => {
             const gIdx = activeCols.findIndex(c => c.key === 'campaignGroupName');
+            // Campaign Name (Ad Set) is always available; Ad Name only has
+            // data when this run was done with a dedup list active.
+            const extraCols = lastRunUsedDedup ? [CAMPAIGN_NAME_COL, AD_NAME_COL] : [CAMPAIGN_NAME_COL];
             const exportCols = gIdx >= 0
-              ? [...activeCols.slice(0, gIdx + 1), CAMPAIGN_NAME_COL, ...activeCols.slice(gIdx + 1)]
-              : [...activeCols, CAMPAIGN_NAME_COL];
+              ? [...activeCols.slice(0, gIdx + 1), ...extraCols, ...activeCols.slice(gIdx + 1)]
+              : [...activeCols, ...extraCols];
             exportToExcel(computedRows, startDate, endDate, TAB_LABELS[activeReportTab] || activeReportTab, exportCols);
           }}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white rounded-lg text-xs font-bold transition-colors">
