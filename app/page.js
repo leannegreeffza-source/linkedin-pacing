@@ -21,7 +21,8 @@ function fmt(n, decimals = 2) {
   if (n == null || isNaN(n)) return '0.00';
   return Number(n).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
-function fmtD(n) { return `$${fmt(n)}`; }
+let VIEW_SYMBOL = '$';   // set during render: 'R' when the Meta Pacing tab is on its ZAR view
+function fmtD(n) { return `${VIEW_SYMBOL}${fmt(n)}`; }
 function fmtR(n) { return `R${fmt(n)}`; }
 
 // Detect billing currency. Priority:
@@ -1177,6 +1178,8 @@ export default function PacingDashboard() {
     if (platform === 'linkedin' && activeTab === 'meta')                       setActiveTab('pacing');
   }, [platform]);
   const apiPrefix = platform === 'meta' ? '/api/meta' : '/api';
+  const [metaCurrency, setMetaCurrency] = useState('USD');   // Meta Pacing tab: which currency is being paced
+  VIEW_SYMBOL = platform === 'meta' && metaCurrency === 'ZAR' ? 'R' : '$';
 
   // Pacing
   const [pacingData, setPacingData] = useState(null);
@@ -1229,6 +1232,15 @@ export default function PacingDashboard() {
     setPacingData(null);
     loadAccounts();
   }, [platform]);
+
+  // Meta Pacing tab: switching USD <-> ZAR clears and reloads for that currency.
+  const firstCurrencyRun = React.useRef(true);
+  useEffect(() => {
+    if (firstCurrencyRun.current) { firstCurrencyRun.current = false; return; }
+    if (platform !== 'meta' || !session || accounts.length === 0) return;
+    setPacingData(null); setLastMonthData(null); setPrevPacingData(null);
+    loadPacing(); loadLastMonth();
+  }, [metaCurrency]);
 
   // Only reload last month when pacingMode switches to trend — NOT on every account change
   const lastMonthLoadedForMode = React.useRef(false);
@@ -1352,9 +1364,17 @@ export default function PacingDashboard() {
     setSelectedAccounts(accounts.map(a => String(a.id)));
   }
 
+  // Which accounts belong to the currency being paced. LinkedIn is always USD; on Meta the
+  // currency comes from each account's own Meta currency (same list the Meta tab uses).
+  function makeInView() {
+    const want = platform === 'meta' ? metaCurrency : 'USD';
+    const cur = new Map(accounts.map(a => [String(a.id), detectCurrency(a)]));
+    return (id) => (cur.get(String(id)) || 'USD') === want;
+  }
+
   async function loadLastMonth() {
-    const zarIds = new Set(accounts.filter(a => detectCurrency(a) === 'ZAR').map(a => String(a.id)));
-    const activeIds = selectedAccounts.filter(id => !excludedAccounts.includes(id) && !zarIds.has(String(id)));
+    const inView = makeInView();
+    const activeIds = selectedAccounts.filter(id => !excludedAccounts.includes(id) && inView(id));
     if (activeIds.length === 0) return;
     setLoadingLastMonth(true);
     try {
@@ -1396,12 +1416,8 @@ export default function PacingDashboard() {
     // denominated in rand, not USD, so including them corrupts the USD totals
     // shown in the summary cards. ZAR accounts appear separately in the
     // Client Breakdown table with their own R-denominated total.
-    const zarIds = new Set(
-      accounts
-        .filter(a => detectCurrency(a) === 'ZAR')
-        .map(a => String(a.id))
-    );
-    const usdOnlyIds = selectedAccounts.filter(id => !zarIds.has(String(id)));
+    const inView = makeInView();
+    const usdOnlyIds = selectedAccounts.filter(id => inView(id));
     if (usdOnlyIds.length === 0) return;
     setLoading(true);
     try {
@@ -1431,8 +1447,8 @@ export default function PacingDashboard() {
   }, [selectedAccounts.length > 0 ? 'ready' : 'waiting']);
 
   async function loadPrevPeriod(customStart, customEnd) {
-    const zarIds = new Set(accounts.filter(a => detectCurrency(a) === 'ZAR').map(a => String(a.id)));
-    const usdOnlyIds = selectedAccounts.filter(id => !zarIds.has(String(id)));
+    const inView = makeInView();
+    const usdOnlyIds = selectedAccounts.filter(id => inView(id));
     if (usdOnlyIds.length === 0) return;
     setLoadingPrev(true);
     try {
@@ -1506,7 +1522,7 @@ export default function PacingDashboard() {
   const prevTotalImpressions = prevPacingData?.summary?.totalImpressions || 0;
   const prevTotalClicks      = prevPacingData?.summary?.totalClicks      || 0;
 
-  const budgetUSD = parseFloat(budget.totalUSD) || 0;
+  const budgetUSD = parseFloat(platform === 'meta' && metaCurrency === 'ZAR' ? budget.totalZAR : budget.totalUSD) || 0;   // the budget for the currency being viewed
   const budgetZAR = parseFloat(budget.totalZAR) || 0;
 
   // Budget is always scoped to the FULL calendar month (from budgetYear/budgetMonth)
@@ -1594,7 +1610,7 @@ export default function PacingDashboard() {
   const trendProjected = isCurrentMonth ? avgDailySpend * daysInBudgetMonth : totalSpend;
   const trendVsLastMonth = lastMonthTotal > 0 ? ((trendProjected - lastMonthTotal) / lastMonthTotal) * 100 : 0;
 
-  const activeAccountCount = selectedAccounts.length;
+  const activeAccountCount = selectedAccounts.filter(makeInView()).length;
   const perAccountBudget = budgetUSD > 0 && activeAccountCount > 0 ? budgetUSD / activeAccountCount : 0;
 
   const forecastData = isCurrentMonth
@@ -2036,6 +2052,23 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                 );
               })}
             </div>
+
+            {platform === 'meta' && (
+              <div className="mt-4 pt-4 border-t border-slate-700">
+                <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Currency</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {['USD', 'ZAR'].map(c => (
+                    <button key={c} onClick={() => setMetaCurrency(c)}
+                      className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${metaCurrency === c ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+                      {c === 'USD' ? '$ USD accounts' : 'R ZAR accounts'}
+                    </button>
+                  ))}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1.5">
+                  {selectedAccounts.filter(makeInView()).length} {metaCurrency} accounts · budget and spend in {metaCurrency}, never converted
+                </div>
+              </div>
+            )}
 
             {/* Pacing Mode */}
             <div className="mt-4 pt-4 border-t border-slate-700">
@@ -2590,7 +2623,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                               <span className="text-xs font-bold text-emerald-400 uppercase tracking-wide px-2 py-1 rounded bg-emerald-900/30 border border-emerald-700">USD Accounts</span>
                               <span className="text-xs text-slate-500">{usdClientRows.length} client{usdClientRows.length !== 1 ? 's' : ''}</span>
                             </div>
-                            <ClientTable rows={usdClientRows} currencySymbol="$" fmtCur={fmtD} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={cbDaysA} lastMonthDays={cbDaysB} labelA={`${cbStartA} → ${cbEndA}`} labelB={`${cbStartB} → ${cbEndB}`} />
+                            <ClientTable rows={usdClientRows} currencySymbol="$" fmtCur={(n) => `$${fmt(n)}`} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={cbDaysA} lastMonthDays={cbDaysB} labelA={`${cbStartA} → ${cbEndA}`} labelB={`${cbStartB} → ${cbEndB}`} />
                           </div>
                         </div>
                       )
@@ -2752,6 +2785,23 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                 );
               })}
             </div>
+
+            {platform === 'meta' && (
+              <div className="mt-4 pt-4 border-t border-slate-700">
+                <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Currency</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {['USD', 'ZAR'].map(c => (
+                    <button key={c} onClick={() => setMetaCurrency(c)}
+                      className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${metaCurrency === c ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+                      {c === 'USD' ? '$ USD accounts' : 'R ZAR accounts'}
+                    </button>
+                  ))}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1.5">
+                  {selectedAccounts.filter(makeInView()).length} {metaCurrency} accounts · budget and spend in {metaCurrency}, never converted
+                </div>
+              </div>
+            )}
 
             {/* Pacing Mode */}
             <div className="mt-4 pt-4 border-t border-slate-700">
@@ -3311,7 +3361,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                               <span className="text-xs font-bold text-emerald-400 uppercase tracking-wide px-2 py-1 rounded bg-emerald-900/30 border border-emerald-700">USD Accounts</span>
                               <span className="text-xs text-slate-500">{usdClientRows.length} client{usdClientRows.length !== 1 ? 's' : ''}</span>
                             </div>
-                            <ClientTable rows={usdClientRows} currencySymbol="$" fmtCur={fmtD} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={cbDaysA} lastMonthDays={cbDaysB} labelA={`${cbStartA} → ${cbEndA}`} labelB={`${cbStartB} → ${cbEndB}`} highlightSpikes={true} />
+                            <ClientTable rows={usdClientRows} currencySymbol="$" fmtCur={(n) => `$${fmt(n)}`} calcCTR={calcCTR} calcCPC={calcCPC} onRowClick={setDrillAccount} daysElapsed={cbDaysA} lastMonthDays={cbDaysB} labelA={`${cbStartA} → ${cbEndA}`} labelB={`${cbStartB} → ${cbEndB}`} highlightSpikes={true} />
                           </div>
                         </div>
                       )
