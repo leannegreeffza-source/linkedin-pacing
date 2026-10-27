@@ -12,7 +12,9 @@
 //        – USD Accounts  (currency === 'USD')           — spend in $
 //        – ZAR Accounts  (currency === 'ZAR')           — spend in R
 //        – Combined ZAR  (both, USD multiplied by FX)   — spend in R, with FX input
-//   • Per-row: Total spend (date range), Yesterday, Today, DoD %, Flag (red if |DoD|>10%)
+//   • Per-row: Total spend (date range), Day Before, Yesterday, Today, DoD %, Flag (red if |DoD|>10%)
+//     DoD % compares YESTERDAY with the DAY BEFORE (both full days). Today is shown for reference only,
+//     because it is a part-day and would always look like a drop.
 //   • Portfolio strip: same five metrics summed across the visible sub-tab
 //     (with the same red flag if portfolio DoD > 10%)
 //
@@ -249,9 +251,10 @@ export default function MetaTab() {
       totalSpend:     tot.totalSpend     || 0,
       todaySpend:     tot.todaySpend     || 0,
       yesterdaySpend: tot.yesterdaySpend || 0,
+      dayBeforeSpend: tot.dayBeforeSpend || 0,
     };
   }
-  const hasSpend = (r) => r.totalSpend > 0 || r.todaySpend > 0 || r.yesterdaySpend > 0;
+  const hasSpend = (r) => r.totalSpend > 0 || r.todaySpend > 0 || r.yesterdaySpend > 0 || r.dayBeforeSpend > 0;
   const bySpend  = (a, b) => b.totalSpend - a.totalSpend;
 
   function describeFailed(failed, accById) {
@@ -359,6 +362,7 @@ export default function MetaTab() {
         totalSpend:     r.totalSpend     * fx,
         todaySpend:     r.todaySpend     * fx,
         yesterdaySpend: r.yesterdaySpend * fx,
+        dayBeforeSpend: r.dayBeforeSpend * fx,
         _sourceUSD:     true,
         _origTotal:     r.totalSpend,
       };
@@ -382,7 +386,7 @@ export default function MetaTab() {
 
   // Per-row DoD + flag
   const computed = searchedRows.map(r => {
-    const d = dod(r.todaySpend, r.yesterdaySpend);
+    const d = dod(r.yesterdaySpend, r.dayBeforeSpend);
     return { ...r, dod: d, flagged: isFlagged(d) };
   });
 
@@ -391,8 +395,9 @@ export default function MetaTab() {
     total:     t.total     + (r.totalSpend     || 0),
     today:     t.today     + (r.todaySpend     || 0),
     yesterday: t.yesterday + (r.yesterdaySpend || 0),
-  }), { total: 0, today: 0, yesterday: 0 });
-  const portfolioDod     = dod(totals.today, totals.yesterday);
+    dayBefore: t.dayBefore + (r.dayBeforeSpend || 0),
+  }), { total: 0, today: 0, yesterday: 0, dayBefore: 0 });
+  const portfolioDod     = dod(totals.yesterday, totals.dayBefore);
   const portfolioFlagged = isFlagged(portfolioDod);
   const flaggedCount     = computed.filter(r => r.flagged).length;
 
@@ -416,7 +421,7 @@ export default function MetaTab() {
   async function exportToExcel() {
     const XLSX = await loadXLSX();
     const header = ['Account ID', 'Account Name', 'Currency', `Total (${activeTab === 'USD Accounts' ? 'USD' : 'ZAR'})`,
-                    'Yesterday', 'Today', 'DoD %', 'Flagged', 'Business Manager'];
+                    'Day Before', 'Yesterday', 'Today', 'DoD % (Yesterday vs Day Before)', 'Flagged', 'Business Manager'];
     const data = [header];
     computed.forEach(r => {
       data.push([
@@ -424,6 +429,7 @@ export default function MetaTab() {
         r.name,
         r._sourceUSD ? `USD→ZAR @${fx}` : r.dispCurrency,
         r.totalSpend,
+        r.dayBeforeSpend,
         r.yesterdaySpend,
         r.todaySpend,
         r.dod == null ? '' : (isFinite(r.dod) ? r.dod : 'new spend'),
@@ -433,12 +439,12 @@ export default function MetaTab() {
     });
     data.push([]);
     data.push(['TOTAL', '', '',
-      totals.total, totals.yesterday, totals.today,
+      totals.total, totals.dayBefore, totals.yesterday, totals.today,
       portfolioDod == null ? '' : (isFinite(portfolioDod) ? portfolioDod : 'new spend'),
       portfolioFlagged ? 'YES' : '',
     ]);
     const ws = XLSX.utils.aoa_to_sheet(data);
-    ws['!cols'] = [{wch:20},{wch:40},{wch:14},{wch:16},{wch:14},{wch:14},{wch:12},{wch:10},{wch:34}];
+    ws['!cols'] = [{wch:20},{wch:40},{wch:14},{wch:16},{wch:14},{wch:14},{wch:14},{wch:16},{wch:10},{wch:34}];
     // Number formats
     const range = XLSX.utils.decode_range(ws['!ref']);
     for (let R = 1; R <= range.e.r; R++) {
@@ -655,6 +661,11 @@ export default function MetaTab() {
           </span>
 
           <span className="text-xs">
+            <span className="text-slate-500">Day Before </span>
+            <span className="text-slate-200 font-bold">{tabSymbol}{fmtNum(totals.dayBefore)}</span>
+          </span>
+
+          <span className="text-xs">
             <span className="text-slate-500">Yesterday </span>
             <span className="text-slate-200 font-bold">{tabSymbol}{fmtNum(totals.yesterday)}</span>
           </span>
@@ -733,9 +744,10 @@ export default function MetaTab() {
                 <th className="px-3 py-2 font-semibold">Account Name</th>
                 <th className="px-3 py-2 font-semibold">Currency</th>
                 <th className="px-3 py-2 font-semibold text-right">Total Spend</th>
+                <th className="px-3 py-2 font-semibold text-right">Day Before</th>
                 <th className="px-3 py-2 font-semibold text-right">Yesterday</th>
                 <th className="px-3 py-2 font-semibold text-right">Today</th>
-                <th className="px-3 py-2 font-semibold text-right">DoD %</th>
+                <th className="px-3 py-2 font-semibold text-right" title="Yesterday vs the day before">DoD %</th>
                 <th className="px-3 py-2 font-semibold text-center">Flag</th>
               </tr>
             </thead>
@@ -761,6 +773,9 @@ export default function MetaTab() {
                     {tabSymbol}{fmtNum(r.totalSpend)}
                   </td>
                   <td className="px-3 py-1.5 text-right text-slate-300 font-mono">
+                    {tabSymbol}{fmtNum(r.dayBeforeSpend)}
+                  </td>
+                  <td className="px-3 py-1.5 text-right text-slate-300 font-mono">
                     {tabSymbol}{fmtNum(r.yesterdaySpend)}
                   </td>
                   <td className="px-3 py-1.5 text-right text-slate-300 font-mono">
@@ -783,6 +798,7 @@ export default function MetaTab() {
               <tr className={`text-white font-bold ${portfolioFlagged ? 'bg-red-900/50' : ''}`}>
                 <td className="px-3 py-2" colSpan={3}>TOTAL — {computed.length} accounts</td>
                 <td className="px-3 py-2 text-right font-mono">{tabSymbol}{fmtNum(totals.total)}</td>
+                <td className="px-3 py-2 text-right font-mono">{tabSymbol}{fmtNum(totals.dayBefore)}</td>
                 <td className="px-3 py-2 text-right font-mono">{tabSymbol}{fmtNum(totals.yesterday)}</td>
                 <td className="px-3 py-2 text-right font-mono">{tabSymbol}{fmtNum(totals.today)}</td>
                 <td className={`px-3 py-2 text-right font-mono ${

@@ -18,6 +18,7 @@ const SAST_OFFSET_MS = 2 * 60 * 60 * 1000;
 function sastNow() { return new Date(Date.now() + SAST_OFFSET_MS); }
 function todayStr()     { return sastNow().toISOString().split('T')[0]; }
 function yesterdayStr() { const d = sastNow(); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().split('T')[0]; }
+function dayBeforeStr() { const d = sastNow(); d.setUTCDate(d.getUTCDate() - 2); return d.toISOString().split('T')[0]; }
 
 function daysBetween(a, b) {
   return Math.max(1, Math.round((new Date(b+'T00:00:00Z') - new Date(a+'T00:00:00Z')) / 86_400_000) + 1);
@@ -87,7 +88,7 @@ export async function POST(request) {
       }
     });
 
-    const today = todayStr(), yest = yesterdayStr();
+    const today = todayStr(), yest = yesterdayStr(), dayBefore = dayBeforeStr();
     const byDate = new Map(), byAcc = new Map();
     const failedAccounts = [];
 
@@ -98,7 +99,7 @@ export async function POST(request) {
       }
       // Key by the id we asked for, and always create the entry — an account that succeeded
       // with no rows is "no spend", which is different from "failed".
-      const a = { accountId: r.accId, totalSpend:0, todaySpend:0, yesterdaySpend:0, totalImpressions:0, totalClicks:0, totalLeads:0 };
+      const a = { accountId: r.accId, totalSpend:0, todaySpend:0, yesterdaySpend:0, dayBeforeSpend:0, totalImpressions:0, totalClicks:0, totalLeads:0 };
       byAcc.set(r.accId, a);
       for (const row of r.rows) {
         const d = byDate.get(row.date) || { date:row.date, spend:0, impressions:0, clicks:0, leads:0 };
@@ -107,6 +108,7 @@ export async function POST(request) {
         a.totalSpend+=row.spend; a.totalImpressions+=row.impressions; a.totalClicks+=row.clicks; a.totalLeads+=row.leads;
         if (row.date===today) a.todaySpend+=row.spend;
         if (row.date===yest)  a.yesterdaySpend+=row.spend;
+        if (row.date===dayBefore) a.dayBeforeSpend+=row.spend;
       }
     }
 
