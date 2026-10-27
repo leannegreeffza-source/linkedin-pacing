@@ -1366,6 +1366,7 @@ export default function PacingDashboard() {
 
   // Which accounts belong to the currency being paced. LinkedIn is always USD; on Meta the
   // currency comes from each account's own Meta currency (same list the Meta tab uses).
+  const inCurrencyView = true;
   function makeInView() {
     const want = platform === 'meta' ? metaCurrency : 'USD';
     const cur = new Map(accounts.map(a => [String(a.id), detectCurrency(a)]));
@@ -2060,7 +2061,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                   {['USD', 'ZAR'].map(c => (
                     <button key={c} onClick={() => setMetaCurrency(c)}
                       className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${metaCurrency === c ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
-                      {c === 'USD' ? '$ USD accounts' : 'R ZAR accounts'}
+                      {c === 'USD' ? '$ USD' : 'R ZAR'} ({accounts.filter(a => detectCurrency(a) === c).length})
                     </button>
                   ))}
                 </div>
@@ -2167,10 +2168,10 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
           </div>
 
           <FilterSection
-            title="Clients"
+            title={platform === 'meta' ? `Clients (${metaCurrency})` : 'Clients'}
             icon={Users}
-            items={accounts}
-            selectedIds={selectedAccounts}
+            items={platform === 'meta' ? accounts.filter(a => detectCurrency(a) === metaCurrency) : accounts}
+            selectedIds={platform === 'meta' ? selectedAccounts.filter(makeInView()) : selectedAccounts}
             onToggle={makeToggle(setSelectedAccounts)}
             loading={loadingAccounts}
             searchValue={clientSearch}
@@ -2183,7 +2184,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
             onClearExclusion={clearUploadedExclusions}
             uploadingExcl={uploadingExcl}
             uploadedCount={uploadedExclusions.length}
-            totalCount={accounts.length}
+            totalCount={platform === 'meta' ? accounts.filter(a => detectCurrency(a) === metaCurrency).length : accounts.length}
             accentColor="blue"
             emptyMessage="No accounts found"
             showExclude={true}
@@ -2793,7 +2794,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
                   {['USD', 'ZAR'].map(c => (
                     <button key={c} onClick={() => setMetaCurrency(c)}
                       className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${metaCurrency === c ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
-                      {c === 'USD' ? '$ USD accounts' : 'R ZAR accounts'}
+                      {c === 'USD' ? '$ USD' : 'R ZAR'} ({accounts.filter(a => detectCurrency(a) === c).length})
                     </button>
                   ))}
                 </div>
@@ -2900,10 +2901,10 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
           </div>
 
           <FilterSection
-            title="Clients"
+            title={platform === 'meta' ? `Clients (${metaCurrency})` : 'Clients'}
             icon={Users}
-            items={accounts}
-            selectedIds={selectedAccounts}
+            items={platform === 'meta' ? accounts.filter(a => detectCurrency(a) === metaCurrency) : accounts}
+            selectedIds={platform === 'meta' ? selectedAccounts.filter(makeInView()) : selectedAccounts}
             onToggle={makeToggle(setSelectedAccounts)}
             loading={loadingAccounts}
             searchValue={clientSearch}
@@ -2916,7 +2917,7 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
             onClearExclusion={clearUploadedExclusions}
             uploadingExcl={uploadingExcl}
             uploadedCount={uploadedExclusions.length}
-            totalCount={accounts.length}
+            totalCount={platform === 'meta' ? accounts.filter(a => detectCurrency(a) === metaCurrency).length : accounts.length}
             accentColor="blue"
             emptyMessage="No accounts found"
             showExclude={true}
