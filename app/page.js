@@ -7,6 +7,7 @@ const BOD2Tab  = dynamic(() => import('./BOD2Tab'),  { ssr: false });
 const KenyaTab = dynamic(() => import('./KenyaTab'), { ssr: false });
 const MetaTab  = dynamic(() => import('./MetaTab'),  { ssr: false });
 import { useSession, signIn, signOut } from 'next-auth/react';
+import { pacingFetch } from '../lib/pacingClient';
 import {
   TrendingUp, TrendingDown, DollarSign, RefreshCw,
   CheckCircle, AlertCircle, XCircle, Edit3, Save, X,
@@ -1365,7 +1366,7 @@ export default function PacingDashboard() {
         startDate: toDateInput(prevStart),
         endDate: toDateInput(prevEnd),
       };
-      const res = await fetch(`${apiPrefix}/pacing`, {
+      const res = await pacingFetch(apiPrefix, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
@@ -1405,7 +1406,7 @@ export default function PacingDashboard() {
     setLoading(true);
     try {
       const body = { accountIds: usdOnlyIds, startDate, endDate };
-      const res = await fetch(`${apiPrefix}/pacing`, {
+      const res = await pacingFetch(apiPrefix, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
@@ -1454,7 +1455,7 @@ export default function PacingDashboard() {
         setCompareEnd(peDate);
       }
       const body = { accountIds: usdOnlyIds, startDate: psDate, endDate: peDate };
-      const res = await fetch(`${apiPrefix}/pacing`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const res = await pacingFetch(apiPrefix, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (res.ok) setPrevPacingData(await res.json());
     } catch (err) { console.error(err); }
     setLoadingPrev(false);
@@ -1633,11 +1634,11 @@ export default function PacingDashboard() {
     setCbLoading(true);
     try {
       const [resA, resB] = await Promise.all([
-        fetch(`${apiPrefix}/pacing`, {
+        pacingFetch(apiPrefix, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ accountIds: activeIds, startDate: cbStartA, endDate: cbEndA }),
         }),
-        fetch(`${apiPrefix}/pacing`, {
+        pacingFetch(apiPrefix, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ accountIds: activeIds, startDate: cbStartB, endDate: cbEndB }),
         }),
@@ -2168,6 +2169,20 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
             </div>
           ) : (
             <>
+              {(pacingData?.failedAccounts?.length > 0) && (
+                <div className="bg-amber-900/30 border border-amber-700 rounded-lg px-4 py-2 text-xs text-amber-100">
+                  <b>{pacingData.failedAccounts.length}</b> account(s) could not be loaded, so totals below are understated.
+                  <span className="text-amber-300"> Press Refresh to retry. </span>
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-amber-300">Show accounts</summary>
+                    <ul className="mt-1 max-h-32 overflow-auto font-mono text-[11px]">
+                      {pacingData.failedAccounts.map(f => (
+                        <li key={f.accountId}>{(accounts.find(a => String(a.id) === String(f.accountId))?.name) || f.accountId} — {f.error}</li>
+                      ))}
+                    </ul>
+                  </details>
+                </div>
+              )}
               {/* Summary Cards — mode-aware */}
               <div className={`grid gap-4 ${pacingMode === 'target' ? 'grid-cols-5' : 'grid-cols-4'}`}>
                 {pacingMode === 'target' ? (<>
@@ -2870,6 +2885,20 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
             </div>
           ) : (
             <>
+              {(pacingData?.failedAccounts?.length > 0) && (
+                <div className="bg-amber-900/30 border border-amber-700 rounded-lg px-4 py-2 text-xs text-amber-100">
+                  <b>{pacingData.failedAccounts.length}</b> account(s) could not be loaded, so totals below are understated.
+                  <span className="text-amber-300"> Press Refresh to retry. </span>
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-amber-300">Show accounts</summary>
+                    <ul className="mt-1 max-h-32 overflow-auto font-mono text-[11px]">
+                      {pacingData.failedAccounts.map(f => (
+                        <li key={f.accountId}>{(accounts.find(a => String(a.id) === String(f.accountId))?.name) || f.accountId} — {f.error}</li>
+                      ))}
+                    </ul>
+                  </details>
+                </div>
+              )}
               {/* Summary Cards — mode-aware */}
               <div className={`grid gap-4 ${pacingMode === 'target' ? 'grid-cols-5' : 'grid-cols-4'}`}>
                 {pacingMode === 'target' ? (<>

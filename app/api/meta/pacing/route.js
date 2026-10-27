@@ -98,19 +98,16 @@ export async function POST(request) {
       }
       // Key by the id we asked for, and always create the entry — an account that succeeded
       // with no rows is "no spend", which is different from "failed".
-      const a = { accountId: r.accId, totalSpend:0, todaySpend:0, yesterdaySpend:0, totalImpressions:0, totalClicks:0, totalLeads:0, daily:[] };
+      const a = { accountId: r.accId, totalSpend:0, todaySpend:0, yesterdaySpend:0, totalImpressions:0, totalClicks:0, totalLeads:0 };
       byAcc.set(r.accId, a);
-      const accDaily = new Map();
       for (const row of r.rows) {
         const d = byDate.get(row.date) || { date:row.date, spend:0, impressions:0, clicks:0, leads:0 };
         d.spend+=row.spend; d.impressions+=row.impressions; d.clicks+=row.clicks; d.leads+=row.leads;
         byDate.set(row.date, d);
-        accDaily.set(row.date, (accDaily.get(row.date) || 0) + row.spend);
         a.totalSpend+=row.spend; a.totalImpressions+=row.impressions; a.totalClicks+=row.clicks; a.totalLeads+=row.leads;
         if (row.date===today) a.todaySpend+=row.spend;
         if (row.date===yest)  a.yesterdaySpend+=row.spend;
       }
-      a.daily = Array.from(accDaily, ([date, spend]) => ({ date, spend })).sort((x,y)=>x.date.localeCompare(y.date));
     }
 
     const dailyData      = Array.from(byDate.values()).sort((x,y)=>x.date.localeCompare(y.date));

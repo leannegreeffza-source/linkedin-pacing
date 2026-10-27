@@ -172,232 +172,6 @@ async function loadXLSX() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// ── Pacing (same logic as the LinkedIn Pacing tab, per currency) ─────────────
-// Budgets are kept per calendar month and per currency in localStorage — USD and ZAR are paced
-// separately, never converted.
-function metaBudgetKey(y, m) { return `meta_pacing_budget_${y}_${String(m).padStart(2, '0')}`; }
-function loadMetaBudget(y, m) {
-  try { const raw = localStorage.getItem(metaBudgetKey(y, m)); if (raw) return JSON.parse(raw); } catch {}
-  return { USD: '', ZAR: '' };
-}
-function saveMetaBudget(y, m, data) { try { localStorage.setItem(metaBudgetKey(y, m), JSON.stringify(data)); } catch {} }
-
-function getPacingStatus(actual, ideal) {
-  if (!ideal) return { label: 'No Target Set', cls: 'text-slate-400' };
-  const ratio = actual / ideal;
-  if (ratio >= 0.9 && ratio <= 1.1) return { label: 'On Track',     cls: 'text-emerald-400' };
-  if (ratio < 0.9)                  return { label: 'Under Pacing', cls: 'text-yellow-400' };
-  return                                   { label: 'Over Pacing',  cls: 'text-emerald-400' }; // over is good, as on LinkedIn
-}
-
-function daysInclusive(a, b) {
-  return Math.max(1, Math.round((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000) + 1);
-}
-
-// Sum every account's daily series into one [{date, spend}] list.
-function sumDaily(rowsOrTotals) {
-  const m = new Map();
-  for (const r of rowsOrTotals) for (const d of (r.daily || [])) m.set(d.date, (m.get(d.date) || 0) + d.spend);
-  return Array.from(m, ([date, spend]) => ({ date, spend })).sort((a, b) => a.date.localeCompare(b.date));
-}
-
-function computePacing({ daily, startDate, endDate, budget, lastMonthDaily }) {
-  const today = todayStr();
-  const [by, bm] = startDate.split('-').map(Number);
-  const daysInMonth = new Date(by, bm, 0).getDate();
-  const now = new Date();
-  const isCurrentMonth = by === now.getFullYear() && bm === now.getMonth() + 1;
-  const todayDate = now.getDate();
-  const daysRemaining = isCurrentMonth ? Math.max(0, daysInMonth - todayDate) : 0;
-
-  const clampedEnd  = endDate > today ? today : endDate;
-  const daysElapsed = daysInclusive(startDate, clampedEnd < startDate ? startDate : clampedEnd);
-  const yest = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return toYMD(d); })();
-
-  const totalSpend     = daily.reduce((s, d) => s + d.spend, 0);
-  const todaySpend     = daily.find(d => d.date === today)?.spend || 0;
-  const yesterdaySpend = daily.find(d => d.date === yest)?.spend  || 0;
-
-  const completed   = daily.filter(d => d.date < today);
-  const last5       = completed.slice(-5);
-  const fiveDayAvg  = last5.length ? last5.reduce((s, d) => s + d.spend, 0) / last5.length : 0;
-
-  // Ideal daily = 5-day average if there is one, else budget ÷ days in month
-  const idealDaily  = fiveDayAvg > 0 ? fiveDayAvg : budget > 0 ? budget / daysInMonth : 0;
-  const idealToDate = idealDaily * daysElapsed;
-  const status      = getPacingStatus(totalSpend, idealToDate);
-  const pacingPct   = idealToDate > 0 ? (totalSpend / idealToDate) * 100 : 0;
-
-  const remaining   = budget > 0 ? Math.max(0, budget - totalSpend) : 0;
-  const spendToYest = Math.max(0, totalSpend - todaySpend);
-  const avgDaily    = spendToYest > 0 ? spendToYest / Math.max(1, daysElapsed - 1) : todaySpend;
-  const projected   = isCurrentMonth ? avgDaily * daysInMonth : totalSpend;
-  const neededDaily = daysRemaining > 0 ? remaining / daysRemaining : 0;
-  const usedPct     = budget > 0 ? Math.min((totalSpend / budget) * 100, 100) : 0;
-
-  // Day-by-day: latest completed day vs the 5-day average
-  const latestDay   = last5.length ? last5[last5.length - 1].spend : yesterdaySpend;
-  const dayAvg      = last5.length ? fiveDayAvg : avgDaily;
-  const dayPct      = dayAvg > 0 ? (latestDay / dayAvg) * 100 : 100;
-  const dayTrend    = dayPct >= 95 && dayPct <= 105 ? 'Steady' : dayPct > 105 ? 'Trending Up' : 'Trending Down';
-
-  // Trend mode: same number of days of last month
-  const lm          = [...(lastMonthDaily || [])].sort((a, b) => a.date.localeCompare(b.date));
-  const lastTotal   = lm.reduce((s, d) => s + d.spend, 0);
-  const samePeriod  = lm.slice(0, daysElapsed).reduce((s, d) => s + d.spend, 0);
-  const trendPct    = samePeriod > 0 ? (totalSpend / samePeriod) * 100 : 0;
-  const trend = samePeriod === 0 ? { label: 'No Prior Data', cls: 'text-slate-400' }
-    : trendPct >= 95 && trendPct <= 105 ? { label: 'On Par', cls: 'text-emerald-400' }
-    : trendPct > 105 ? { label: 'Ahead of Last Month', cls: 'text-blue-400' }
-    : { label: 'Behind Last Month', cls: 'text-yellow-400' };
-  const projVsLast = lastTotal > 0 ? ((projected - lastTotal) / lastTotal) * 100 : 0;
-
-  return { by, bm, daysInMonth, daysElapsed, isCurrentMonth, daysRemaining, totalSpend, todaySpend, yesterdaySpend,
-           idealDaily, idealToDate, status, pacingPct, remaining, avgDaily, projected, neededDaily, usedPct,
-           latestDay, dayAvg, dayPct, dayTrend, lastTotal, samePeriod, trendPct, trend, projVsLast };
-}
-
-function PacingPanel({ currency, rows, startDate, endDate, lastMonthDaily, lastMonthLoading, onLoadLastMonth }) {
-  const sym = currency === 'USD' ? '$' : 'R';
-  const [by, bm] = startDate.split('-').map(Number);
-  const [budgets, setBudgets] = useState({ USD: '', ZAR: '' });
-  const [mode, setMode]       = useState('target');
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft]     = useState('');
-
-  useEffect(() => { setBudgets(loadMetaBudget(by, bm)); }, [by, bm]);
-
-  const budget = parseFloat(budgets[currency]) || 0;
-  const daily  = sumDaily(rows);
-  const p      = computePacing({ daily, startDate, endDate, budget, lastMonthDaily });
-  const money  = (v) => `${sym}${fmtNum(v, 2)}`;
-  const monthLabel = new Date(by, bm - 1, 1).toLocaleString('en-ZA', { month: 'long', year: 'numeric' });
-
-  function saveDraft() {
-    const next = { ...budgets, [currency]: draft };
-    setBudgets(next); saveMetaBudget(by, bm, next); setEditing(false);
-  }
-
-  const card = 'bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 min-w-0';
-  const lbl  = 'text-[10px] uppercase tracking-wide text-slate-400 font-bold mb-1';
-
-  return (
-    <div className="px-4 py-3 border-b border-slate-700 bg-slate-900/40 shrink-0">
-      <div className="flex items-center gap-3 mb-2 flex-wrap">
-        <span className="text-xs font-bold text-white uppercase tracking-wide">Pacing · {currency} · {monthLabel}</span>
-        <div className="flex gap-1">
-          <button onClick={() => setMode('target')}
-            className={`px-2.5 py-1 rounded text-[11px] font-semibold ${mode === 'target' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
-            vs Target
-          </button>
-          <button onClick={() => { setMode('trend'); if (!lastMonthDaily && !lastMonthLoading) onLoadLastMonth(); }}
-            className={`px-2.5 py-1 rounded text-[11px] font-semibold ${mode === 'trend' ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
-            vs Last Month
-          </button>
-        </div>
-        {mode === 'trend' && lastMonthLoading && <span className="text-[11px] text-purple-300">Loading last month…</span>}
-        <span className="text-[11px] text-slate-500">
-          Day {p.daysElapsed} of {p.daysInMonth} · spend in the selected range · native {currency}, not converted
-        </span>
-      </div>
-
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
-        {mode === 'target' ? (<>
-          <div className={card}>
-            <div className={lbl}>Target ({currency})</div>
-            {editing ? (
-              <div className="flex gap-1">
-                <input autoFocus type="number" value={draft} onChange={e => setDraft(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') saveDraft(); if (e.key === 'Escape') setEditing(false); }}
-                  className="w-full px-2 py-0.5 bg-slate-700 border border-slate-600 rounded text-xs text-white" />
-                <button onClick={saveDraft} className="px-2 bg-blue-600 hover:bg-blue-500 rounded text-xs text-white font-bold">Save</button>
-              </div>
-            ) : (<>
-              <div className="text-lg font-bold text-white">{budget > 0 ? money(budget) : '—'}</div>
-              <button onClick={() => { setDraft(budget > 0 ? String(budget) : ''); setEditing(true); }}
-                className="text-[11px] text-blue-400 hover:text-blue-300">{budget > 0 ? 'Edit target' : 'Set target'}</button>
-            </>)}
-          </div>
-
-          <div className={card}>
-            <div className={lbl}>Spend to date</div>
-            <div className="text-lg font-bold text-white">{money(p.totalSpend)}</div>
-            {budget > 0 ? (<>
-              <div className="h-1.5 bg-slate-700 rounded mt-1"><div className="h-1.5 bg-blue-500 rounded" style={{ width: `${p.usedPct}%` }} /></div>
-              <div className="text-[11px] text-slate-400 mt-0.5">{p.usedPct.toFixed(1)}% of target</div>
-            </>) : <div className="text-[11px] text-slate-500">No target set</div>}
-          </div>
-
-          <div className={card}>
-            <div className={lbl}>Pacing status</div>
-            <div className={`text-lg font-bold ${p.status.cls}`}>{p.status.label}</div>
-            <div className="text-[11px] text-slate-400">
-              {p.idealToDate > 0 ? `${p.pacingPct.toFixed(1)}% of ideal ${money(p.idealToDate)}` : 'Needs spend history or a target'}
-            </div>
-          </div>
-
-          <div className={card}>
-            <div className={lbl}>Month-end forecast</div>
-            <div className={`text-lg font-bold ${
-              budget > 0 && p.projected > budget * 1.05 ? 'text-red-400'
-              : budget > 0 && p.projected < budget * 0.9 ? 'text-yellow-400' : 'text-emerald-400'}`}>{money(p.projected)}</div>
-            <div className="text-[11px] text-slate-400">Avg {money(p.avgDaily)}/day × {p.daysInMonth} days</div>
-          </div>
-
-          <div className={card}>
-            <div className={lbl}>Needed per day</div>
-            <div className="text-lg font-bold text-white">{budget > 0 && p.daysRemaining > 0 ? money(p.neededDaily) : '—'}</div>
-            <div className="text-[11px] text-slate-400">
-              {budget > 0 ? `${money(p.remaining)} left · ${p.daysRemaining} days to go` : 'Set a target to see this'}
-            </div>
-          </div>
-        </>) : (<>
-          <div className={card}>
-            <div className={lbl}>This period</div>
-            <div className="text-lg font-bold text-white">{money(p.totalSpend)}</div>
-            <div className="text-[11px] text-slate-400">{p.daysElapsed} days</div>
-          </div>
-          <div className={card}>
-            <div className={lbl}>Same days last month</div>
-            <div className="text-lg font-bold text-white">{lastMonthDaily ? money(p.samePeriod) : '…'}</div>
-            <div className="text-[11px] text-slate-400">Full month {lastMonthDaily ? money(p.lastTotal) : '…'}</div>
-          </div>
-          <div className={card}>
-            <div className={lbl}>Trend</div>
-            <div className={`text-lg font-bold ${p.trend.cls}`}>{p.trend.label}</div>
-            <div className="text-[11px] text-slate-400">
-              {p.samePeriod > 0 ? `${p.trendPct.toFixed(1)}% of last month (${p.totalSpend - p.samePeriod >= 0 ? '+' : '−'}${money(Math.abs(p.totalSpend - p.samePeriod))})` : '—'}
-            </div>
-          </div>
-          <div className={card}>
-            <div className={lbl}>Projected month</div>
-            <div className="text-lg font-bold text-white">{money(p.projected)}</div>
-            <div className="text-[11px] text-slate-400">{p.lastTotal > 0 ? `${p.projVsLast >= 0 ? '+' : ''}${p.projVsLast.toFixed(1)}% vs last month` : '—'}</div>
-          </div>
-          <div className={card}>
-            <div className={lbl}>Avg per day</div>
-            <div className="text-lg font-bold text-white">{money(p.avgDaily)}</div>
-            <div className="text-[11px] text-slate-400">Up to yesterday</div>
-          </div>
-        </>)}
-      </div>
-
-      <div className="grid grid-cols-2 gap-2 mt-2">
-        <div className={card}>
-          <div className={lbl}>Day-by-day pacing</div>
-          <div className={`text-sm font-bold ${p.dayTrend === 'Steady' ? 'text-emerald-400' : p.dayTrend === 'Trending Up' ? 'text-blue-400' : 'text-yellow-400'}`}>{p.dayTrend}</div>
-          <div className="text-[11px] text-slate-400">Latest full day {money(p.latestDay)} vs 5-day avg {money(p.dayAvg)} ({p.dayPct.toFixed(0)}%)</div>
-        </div>
-        <div className={card}>
-          <div className={lbl}>Today vs yesterday</div>
-          <div className="text-sm font-bold text-white">{money(p.todaySpend)} <span className="text-slate-500 font-normal">vs</span> {money(p.yesterdaySpend)}</div>
-          <div className="text-[11px] text-slate-400">Today is part-day, so it will usually read lower</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function MetaTab() {
   const { data: session } = useSession();
 
@@ -436,10 +210,6 @@ export default function MetaTab() {
   const [showFailed, setShowFailed] = useState(false);
   const [retrying, setRetrying]     = useState(false);
 
-  // Last month's daily spend per currency, loaded on demand for the "vs Last Month" pacing mode
-  const [lastMonthDaily, setLastMonthDaily]     = useState(null);   // { USD: [...], ZAR: [...], key }
-  const [lastMonthLoading, setLastMonthLoading] = useState(false);
-
   const datesChanged = hasRun && (ranDates.start !== startDate || ranDates.end !== endDate);
 
   // ── Fetch all Meta accounts on mount ─────────────────────────────────────
@@ -476,7 +246,6 @@ export default function MetaTab() {
       name:           a.name || `Account ${a.id}`,
       currency:       (a.currency || '').toUpperCase(),
       bm:             a.bm || '',
-      daily:          tot.daily || [],
       totalSpend:     tot.totalSpend     || 0,
       todaySpend:     tot.todaySpend     || 0,
       yesterdaySpend: tot.yesterdaySpend || 0,
@@ -575,26 +344,6 @@ export default function MetaTab() {
       setError(e.message || String(e));
     }
     setRetrying(false);
-  }
-
-  // Previous calendar month (relative to the start date), for "vs Last Month" pacing.
-  async function loadLastMonth() {
-    const [y, m] = startDate.split('-').map(Number);
-    const ps = toYMD(new Date(y, m - 2, 1));
-    const pe = toYMD(new Date(y, m - 1, 0));
-    const key = `${ps}_${pe}`;
-    if (lastMonthDaily?.key === key || lastMonthLoading) return;
-    const queried = allAccounts.filter(a => ['USD', 'ZAR'].includes((a.currency || '').toUpperCase()));
-    if (!queried.length) return;
-    setLastMonthLoading(true);
-    try {
-      const { totals } = await fetchTotalsResilient(queried.map(a => a.id), { startDate: ps, endDate: pe });
-      const cur = new Map(queried.map(a => [String(a.id), (a.currency || '').toUpperCase()]));
-      const by = { USD: [], ZAR: [] };
-      for (const [id, tot] of totals) { const c = cur.get(id); if (by[c]) by[c].push(tot); }
-      setLastMonthDaily({ key, USD: sumDaily(by.USD), ZAR: sumDaily(by.ZAR) });
-    } catch (e) { setError(e.message || String(e)); }
-    setLastMonthLoading(false);
   }
 
   // ── View rows: filter by sub-tab, then by search, then convert if Combined ──
@@ -960,21 +709,6 @@ export default function MetaTab() {
           );
         })}
       </div>
-
-      {/* ══ PACING (per currency) ══ */}
-      {hasRun && rows.length > 0 && (activeTab === 'Combined (ZAR)' ? ['USD', 'ZAR'] : [activeTab === 'USD Accounts' ? 'USD' : 'ZAR'])
-        .map(cur => {
-          const curRows = rows.filter(r => r.currency === cur);
-          if (!curRows.length) return null;
-          const [sy, sm] = startDate.split('-').map(Number);
-          const lm = lastMonthDaily && lastMonthDaily.key === `${toYMD(new Date(sy, sm - 2, 1))}_${toYMD(new Date(sy, sm - 1, 0))}`
-            ? lastMonthDaily[cur] : null;
-          return (
-            <PacingPanel key={cur} currency={cur} rows={curRows}
-              startDate={ranDates.start || startDate} endDate={ranDates.end || endDate}
-              lastMonthDaily={lm} lastMonthLoading={lastMonthLoading} onLoadLastMonth={loadLastMonth} />
-          );
-        })}
 
       {/* ══ TABLE ══ */}
       <div className="flex-1 overflow-auto">
