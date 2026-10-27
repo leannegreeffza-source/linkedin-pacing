@@ -29,7 +29,15 @@ const DEFAULT_FX = 17.30;       // matches your March 2026 recon FX
 const FLAG_PCT   = 0.10;        // 10% DoD threshold
 
 // ── Date helpers ─────────────────────────────────────────────────────────────
-function toYMD(d)         { return d.toISOString().split('T')[0]; }
+// Read the browser's LOCAL date parts. d.toISOString() converts to UTC first, which in SAST
+// (UTC+2) rolls local midnight back to 22:00 the previous day, so "This Month" started a day
+// early and "today" was wrong after midnight.
+function toYMD(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 function todayStr()       { return toYMD(new Date()); }
 function firstOfMonth()   { const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth(), 1)); }
 function lastMonthStart() { const d = new Date(); return toYMD(new Date(d.getFullYear(), d.getMonth()-1, 1)); }
@@ -60,6 +68,98 @@ function isFlagged(d) {
   return Math.abs(d) > FLAG_PCT;
 }
 
+// ── Resilient loader ─────────────────────────────────────────────────────────
+// Vercel Hobby cuts every function off at 60s, and Meta rate-limits bursts of calls. So accounts
+// are requested in small, throttled chunks; any account that fails is retried in progressively
+// smaller chunks, and whatever still fails is REPORTED — it is never silently shown as zero.
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+async function runPool(items, size, fn) {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(size, items.length) }, async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+}
+
+async function postPacing(ids, startDate, endDate) {
+  const r = await fetch('/api/meta/pacing', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ accountIds: ids, startDate, endDate, resilient: true }),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.error || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
+// Round 1 is the main pass; later rounds only re-ask for accounts that failed, in smaller chunks.
+const RETRY_ROUNDS = [
+  { size: 25, conc: 3 },
+  { size: 10, conc: 2 },
+  { size:  5, conc: 2 },
+  { size:  3, conc: 1 },
+];
+
+// Returns { totals: Map(accountId → {totalSpend,todaySpend,yesterdaySpend}), failed: [{accountId, error}] }
+async function fetchTotalsResilient(accountIds, { startDate, endDate, onProgress } = {}) {
+  const totals    = new Map();
+  const lastError = new Map();
+  const permanent = new Map();   // errors that retrying cannot fix (permissions, bad token…)
+  let pending = [...new Set(accountIds.map(String))];
+  const total = pending.length;
+
+  for (let round = 0; round < RETRY_ROUNDS.length && pending.length; round++) {
+    const { size, conc } = RETRY_ROUNDS[round];
+    const retry = [];
+    await runPool(chunkArray(pending, size), conc, async (ids) => {
+      try {
+        const res = await postPacing(ids, startDate, endDate);
+        const failedIds = new Set();
+        for (const f of res.failedAccounts || []) {
+          const id = String(f.accountId);
+          failedIds.add(id);
+          lastError.set(id, f.error || 'failed');
+          if (f.retryable === false) permanent.set(id, f.error || 'failed'); else retry.push(id);
+        }
+        for (const tot of res.accountTotals || []) {
+          const id = String(tot.accountId);
+          if (!failedIds.has(id)) totals.set(id, tot);
+        }
+        // Defensive: an account we asked for that came back as neither a result nor a failure
+        // must not vanish — treat it as failed and try again.
+        for (const id of ids) {
+          if (!totals.has(id) && !failedIds.has(id)) { retry.push(id); lastError.set(id, 'no result returned'); }
+        }
+      } catch (e) {
+        // Whole request failed (timeout, network, 5xx) — retry its accounts in smaller chunks.
+        for (const id of ids) { retry.push(id); lastError.set(id, e.message || String(e)); }
+      }
+      if (onProgress) onProgress({ done: totals.size + permanent.size, total, round });
+    });
+    pending = retry;
+    if (pending.length && round < RETRY_ROUNDS.length - 1) await sleep(2000 * (round + 1));
+  }
+
+  const failed = [
+    ...pending.map(id => ({ accountId: id, error: lastError.get(id) || 'gave up after retries' })),
+    ...[...permanent].map(([id, error]) => ({ accountId: id, error })),
+  ];
+  return { totals, failed };
+}
+
 // ── SheetJS loader (Excel export) ────────────────────────────────────────────
 async function loadXLSX() {
   if (window.XLSX) return window.XLSX;
@@ -72,6 +172,232 @@ async function loadXLSX() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// ── Pacing (same logic as the LinkedIn Pacing tab, per currency) ─────────────
+// Budgets are kept per calendar month and per currency in localStorage — USD and ZAR are paced
+// separately, never converted.
+function metaBudgetKey(y, m) { return `meta_pacing_budget_${y}_${String(m).padStart(2, '0')}`; }
+function loadMetaBudget(y, m) {
+  try { const raw = localStorage.getItem(metaBudgetKey(y, m)); if (raw) return JSON.parse(raw); } catch {}
+  return { USD: '', ZAR: '' };
+}
+function saveMetaBudget(y, m, data) { try { localStorage.setItem(metaBudgetKey(y, m), JSON.stringify(data)); } catch {} }
+
+function getPacingStatus(actual, ideal) {
+  if (!ideal) return { label: 'No Target Set', cls: 'text-slate-400' };
+  const ratio = actual / ideal;
+  if (ratio >= 0.9 && ratio <= 1.1) return { label: 'On Track',     cls: 'text-emerald-400' };
+  if (ratio < 0.9)                  return { label: 'Under Pacing', cls: 'text-yellow-400' };
+  return                                   { label: 'Over Pacing',  cls: 'text-emerald-400' }; // over is good, as on LinkedIn
+}
+
+function daysInclusive(a, b) {
+  return Math.max(1, Math.round((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000) + 1);
+}
+
+// Sum every account's daily series into one [{date, spend}] list.
+function sumDaily(rowsOrTotals) {
+  const m = new Map();
+  for (const r of rowsOrTotals) for (const d of (r.daily || [])) m.set(d.date, (m.get(d.date) || 0) + d.spend);
+  return Array.from(m, ([date, spend]) => ({ date, spend })).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function computePacing({ daily, startDate, endDate, budget, lastMonthDaily }) {
+  const today = todayStr();
+  const [by, bm] = startDate.split('-').map(Number);
+  const daysInMonth = new Date(by, bm, 0).getDate();
+  const now = new Date();
+  const isCurrentMonth = by === now.getFullYear() && bm === now.getMonth() + 1;
+  const todayDate = now.getDate();
+  const daysRemaining = isCurrentMonth ? Math.max(0, daysInMonth - todayDate) : 0;
+
+  const clampedEnd  = endDate > today ? today : endDate;
+  const daysElapsed = daysInclusive(startDate, clampedEnd < startDate ? startDate : clampedEnd);
+  const yest = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return toYMD(d); })();
+
+  const totalSpend     = daily.reduce((s, d) => s + d.spend, 0);
+  const todaySpend     = daily.find(d => d.date === today)?.spend || 0;
+  const yesterdaySpend = daily.find(d => d.date === yest)?.spend  || 0;
+
+  const completed   = daily.filter(d => d.date < today);
+  const last5       = completed.slice(-5);
+  const fiveDayAvg  = last5.length ? last5.reduce((s, d) => s + d.spend, 0) / last5.length : 0;
+
+  // Ideal daily = 5-day average if there is one, else budget ÷ days in month
+  const idealDaily  = fiveDayAvg > 0 ? fiveDayAvg : budget > 0 ? budget / daysInMonth : 0;
+  const idealToDate = idealDaily * daysElapsed;
+  const status      = getPacingStatus(totalSpend, idealToDate);
+  const pacingPct   = idealToDate > 0 ? (totalSpend / idealToDate) * 100 : 0;
+
+  const remaining   = budget > 0 ? Math.max(0, budget - totalSpend) : 0;
+  const spendToYest = Math.max(0, totalSpend - todaySpend);
+  const avgDaily    = spendToYest > 0 ? spendToYest / Math.max(1, daysElapsed - 1) : todaySpend;
+  const projected   = isCurrentMonth ? avgDaily * daysInMonth : totalSpend;
+  const neededDaily = daysRemaining > 0 ? remaining / daysRemaining : 0;
+  const usedPct     = budget > 0 ? Math.min((totalSpend / budget) * 100, 100) : 0;
+
+  // Day-by-day: latest completed day vs the 5-day average
+  const latestDay   = last5.length ? last5[last5.length - 1].spend : yesterdaySpend;
+  const dayAvg      = last5.length ? fiveDayAvg : avgDaily;
+  const dayPct      = dayAvg > 0 ? (latestDay / dayAvg) * 100 : 100;
+  const dayTrend    = dayPct >= 95 && dayPct <= 105 ? 'Steady' : dayPct > 105 ? 'Trending Up' : 'Trending Down';
+
+  // Trend mode: same number of days of last month
+  const lm          = [...(lastMonthDaily || [])].sort((a, b) => a.date.localeCompare(b.date));
+  const lastTotal   = lm.reduce((s, d) => s + d.spend, 0);
+  const samePeriod  = lm.slice(0, daysElapsed).reduce((s, d) => s + d.spend, 0);
+  const trendPct    = samePeriod > 0 ? (totalSpend / samePeriod) * 100 : 0;
+  const trend = samePeriod === 0 ? { label: 'No Prior Data', cls: 'text-slate-400' }
+    : trendPct >= 95 && trendPct <= 105 ? { label: 'On Par', cls: 'text-emerald-400' }
+    : trendPct > 105 ? { label: 'Ahead of Last Month', cls: 'text-blue-400' }
+    : { label: 'Behind Last Month', cls: 'text-yellow-400' };
+  const projVsLast = lastTotal > 0 ? ((projected - lastTotal) / lastTotal) * 100 : 0;
+
+  return { by, bm, daysInMonth, daysElapsed, isCurrentMonth, daysRemaining, totalSpend, todaySpend, yesterdaySpend,
+           idealDaily, idealToDate, status, pacingPct, remaining, avgDaily, projected, neededDaily, usedPct,
+           latestDay, dayAvg, dayPct, dayTrend, lastTotal, samePeriod, trendPct, trend, projVsLast };
+}
+
+function PacingPanel({ currency, rows, startDate, endDate, lastMonthDaily, lastMonthLoading, onLoadLastMonth }) {
+  const sym = currency === 'USD' ? '$' : 'R';
+  const [by, bm] = startDate.split('-').map(Number);
+  const [budgets, setBudgets] = useState({ USD: '', ZAR: '' });
+  const [mode, setMode]       = useState('target');
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft]     = useState('');
+
+  useEffect(() => { setBudgets(loadMetaBudget(by, bm)); }, [by, bm]);
+
+  const budget = parseFloat(budgets[currency]) || 0;
+  const daily  = sumDaily(rows);
+  const p      = computePacing({ daily, startDate, endDate, budget, lastMonthDaily });
+  const money  = (v) => `${sym}${fmtNum(v, 2)}`;
+  const monthLabel = new Date(by, bm - 1, 1).toLocaleString('en-ZA', { month: 'long', year: 'numeric' });
+
+  function saveDraft() {
+    const next = { ...budgets, [currency]: draft };
+    setBudgets(next); saveMetaBudget(by, bm, next); setEditing(false);
+  }
+
+  const card = 'bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 min-w-0';
+  const lbl  = 'text-[10px] uppercase tracking-wide text-slate-400 font-bold mb-1';
+
+  return (
+    <div className="px-4 py-3 border-b border-slate-700 bg-slate-900/40 shrink-0">
+      <div className="flex items-center gap-3 mb-2 flex-wrap">
+        <span className="text-xs font-bold text-white uppercase tracking-wide">Pacing · {currency} · {monthLabel}</span>
+        <div className="flex gap-1">
+          <button onClick={() => setMode('target')}
+            className={`px-2.5 py-1 rounded text-[11px] font-semibold ${mode === 'target' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+            vs Target
+          </button>
+          <button onClick={() => { setMode('trend'); if (!lastMonthDaily && !lastMonthLoading) onLoadLastMonth(); }}
+            className={`px-2.5 py-1 rounded text-[11px] font-semibold ${mode === 'trend' ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+            vs Last Month
+          </button>
+        </div>
+        {mode === 'trend' && lastMonthLoading && <span className="text-[11px] text-purple-300">Loading last month…</span>}
+        <span className="text-[11px] text-slate-500">
+          Day {p.daysElapsed} of {p.daysInMonth} · spend in the selected range · native {currency}, not converted
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
+        {mode === 'target' ? (<>
+          <div className={card}>
+            <div className={lbl}>Target ({currency})</div>
+            {editing ? (
+              <div className="flex gap-1">
+                <input autoFocus type="number" value={draft} onChange={e => setDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveDraft(); if (e.key === 'Escape') setEditing(false); }}
+                  className="w-full px-2 py-0.5 bg-slate-700 border border-slate-600 rounded text-xs text-white" />
+                <button onClick={saveDraft} className="px-2 bg-blue-600 hover:bg-blue-500 rounded text-xs text-white font-bold">Save</button>
+              </div>
+            ) : (<>
+              <div className="text-lg font-bold text-white">{budget > 0 ? money(budget) : '—'}</div>
+              <button onClick={() => { setDraft(budget > 0 ? String(budget) : ''); setEditing(true); }}
+                className="text-[11px] text-blue-400 hover:text-blue-300">{budget > 0 ? 'Edit target' : 'Set target'}</button>
+            </>)}
+          </div>
+
+          <div className={card}>
+            <div className={lbl}>Spend to date</div>
+            <div className="text-lg font-bold text-white">{money(p.totalSpend)}</div>
+            {budget > 0 ? (<>
+              <div className="h-1.5 bg-slate-700 rounded mt-1"><div className="h-1.5 bg-blue-500 rounded" style={{ width: `${p.usedPct}%` }} /></div>
+              <div className="text-[11px] text-slate-400 mt-0.5">{p.usedPct.toFixed(1)}% of target</div>
+            </>) : <div className="text-[11px] text-slate-500">No target set</div>}
+          </div>
+
+          <div className={card}>
+            <div className={lbl}>Pacing status</div>
+            <div className={`text-lg font-bold ${p.status.cls}`}>{p.status.label}</div>
+            <div className="text-[11px] text-slate-400">
+              {p.idealToDate > 0 ? `${p.pacingPct.toFixed(1)}% of ideal ${money(p.idealToDate)}` : 'Needs spend history or a target'}
+            </div>
+          </div>
+
+          <div className={card}>
+            <div className={lbl}>Month-end forecast</div>
+            <div className={`text-lg font-bold ${
+              budget > 0 && p.projected > budget * 1.05 ? 'text-red-400'
+              : budget > 0 && p.projected < budget * 0.9 ? 'text-yellow-400' : 'text-emerald-400'}`}>{money(p.projected)}</div>
+            <div className="text-[11px] text-slate-400">Avg {money(p.avgDaily)}/day × {p.daysInMonth} days</div>
+          </div>
+
+          <div className={card}>
+            <div className={lbl}>Needed per day</div>
+            <div className="text-lg font-bold text-white">{budget > 0 && p.daysRemaining > 0 ? money(p.neededDaily) : '—'}</div>
+            <div className="text-[11px] text-slate-400">
+              {budget > 0 ? `${money(p.remaining)} left · ${p.daysRemaining} days to go` : 'Set a target to see this'}
+            </div>
+          </div>
+        </>) : (<>
+          <div className={card}>
+            <div className={lbl}>This period</div>
+            <div className="text-lg font-bold text-white">{money(p.totalSpend)}</div>
+            <div className="text-[11px] text-slate-400">{p.daysElapsed} days</div>
+          </div>
+          <div className={card}>
+            <div className={lbl}>Same days last month</div>
+            <div className="text-lg font-bold text-white">{lastMonthDaily ? money(p.samePeriod) : '…'}</div>
+            <div className="text-[11px] text-slate-400">Full month {lastMonthDaily ? money(p.lastTotal) : '…'}</div>
+          </div>
+          <div className={card}>
+            <div className={lbl}>Trend</div>
+            <div className={`text-lg font-bold ${p.trend.cls}`}>{p.trend.label}</div>
+            <div className="text-[11px] text-slate-400">
+              {p.samePeriod > 0 ? `${p.trendPct.toFixed(1)}% of last month (${p.totalSpend - p.samePeriod >= 0 ? '+' : '−'}${money(Math.abs(p.totalSpend - p.samePeriod))})` : '—'}
+            </div>
+          </div>
+          <div className={card}>
+            <div className={lbl}>Projected month</div>
+            <div className="text-lg font-bold text-white">{money(p.projected)}</div>
+            <div className="text-[11px] text-slate-400">{p.lastTotal > 0 ? `${p.projVsLast >= 0 ? '+' : ''}${p.projVsLast.toFixed(1)}% vs last month` : '—'}</div>
+          </div>
+          <div className={card}>
+            <div className={lbl}>Avg per day</div>
+            <div className="text-lg font-bold text-white">{money(p.avgDaily)}</div>
+            <div className="text-[11px] text-slate-400">Up to yesterday</div>
+          </div>
+        </>)}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 mt-2">
+        <div className={card}>
+          <div className={lbl}>Day-by-day pacing</div>
+          <div className={`text-sm font-bold ${p.dayTrend === 'Steady' ? 'text-emerald-400' : p.dayTrend === 'Trending Up' ? 'text-blue-400' : 'text-yellow-400'}`}>{p.dayTrend}</div>
+          <div className="text-[11px] text-slate-400">Latest full day {money(p.latestDay)} vs 5-day avg {money(p.dayAvg)} ({p.dayPct.toFixed(0)}%)</div>
+        </div>
+        <div className={card}>
+          <div className={lbl}>Today vs yesterday</div>
+          <div className="text-sm font-bold text-white">{money(p.todaySpend)} <span className="text-slate-500 font-normal">vs</span> {money(p.yesterdaySpend)}</div>
+          <div className="text-[11px] text-slate-400">Today is part-day, so it will usually read lower</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MetaTab() {
   const { data: session } = useSession();
 
@@ -104,6 +430,16 @@ export default function MetaTab() {
   // ── Search ────────────────────────────────────────────────────────────────
   const [search, setSearch] = useState('');
 
+  // ── Coverage / diagnostics ────────────────────────────────────────────────
+  const [tokenType, setTokenType]   = useState('');   // 'system_user' | 'facebook_session'
+  const [coverage, setCoverage]     = useState(null); // { queried, loaded, failed[], skippedCurrency }
+  const [showFailed, setShowFailed] = useState(false);
+  const [retrying, setRetrying]     = useState(false);
+
+  // Last month's daily spend per currency, loaded on demand for the "vs Last Month" pacing mode
+  const [lastMonthDaily, setLastMonthDaily]     = useState(null);   // { USD: [...], ZAR: [...], key }
+  const [lastMonthLoading, setLastMonthLoading] = useState(false);
+
   const datesChanged = hasRun && (ranDates.start !== startDate || ranDates.end !== endDate);
 
   // ── Fetch all Meta accounts on mount ─────────────────────────────────────
@@ -117,6 +453,7 @@ export default function MetaTab() {
           const e = await r.json().catch(() => ({}));
           throw new Error(e.error || `HTTP ${r.status}`);
         }
+        setTokenType(r.headers.get('x-meta-token-type') || '');
         return r.json();
       })
       .then(d => {
@@ -130,96 +467,134 @@ export default function MetaTab() {
   }, [session]);
 
   // ── Run Report ────────────────────────────────────────────────────────────
-  // Two batched calls — one per currency group — because /api/meta/pacing
-  // sums spend in the account's native currency. Calling it with mixed
-  // currencies in one shot would conflate USD+ZAR in the daily totals,
-  // which we don't want even though the per-account values come back correctly.
+  // Queries every USD/ZAR account through fetchTotalsResilient (throttled chunks, automatic
+  // retries). Accounts that still fail are listed in the amber banner instead of silently
+  // showing as zero spend. Spend values stay in each account's native currency.
+  function buildRow(a, tot) {
+    return {
+      accountId:      String(a.id),
+      name:           a.name || `Account ${a.id}`,
+      currency:       (a.currency || '').toUpperCase(),
+      bm:             a.bm || '',
+      daily:          tot.daily || [],
+      totalSpend:     tot.totalSpend     || 0,
+      todaySpend:     tot.todaySpend     || 0,
+      yesterdaySpend: tot.yesterdaySpend || 0,
+    };
+  }
+  const hasSpend = (r) => r.totalSpend > 0 || r.todaySpend > 0 || r.yesterdaySpend > 0;
+  const bySpend  = (a, b) => b.totalSpend - a.totalSpend;
+
+  function describeFailed(failed, accById) {
+    return failed.map(f => {
+      const a = accById.get(String(f.accountId)) || {};
+      return { accountId: String(f.accountId), name: a.name || '', currency: a.currency || '', bm: a.bm || '', error: f.error };
+    });
+  }
+
   async function runReport() {
     if (!allAccounts.length) {
       setError('Account list not loaded yet — wait a moment, then try again.');
       return;
     }
 
-    const usdAccs = allAccounts.filter(a => (a.currency || '').toUpperCase() === 'USD');
-    const zarAccs = allAccounts.filter(a => (a.currency || '').toUpperCase() === 'ZAR');
+    const queried = allAccounts.filter(a => ['USD', 'ZAR'].includes((a.currency || '').toUpperCase()));
+    const skippedCurrency = allAccounts.length - queried.length;
 
-    if (usdAccs.length === 0 && zarAccs.length === 0) {
+    if (queried.length === 0) {
       setError('No accounts with USD or ZAR currency. Found currencies: ' +
         [...new Set(allAccounts.map(a => a.currency))].join(', '));
       return;
     }
 
-    setLoading(true); setError(''); setHasRun(true);
-    setProgress({ pct: 5, message: `Fetching ${usdAccs.length} USD + ${zarAccs.length} ZAR accounts…` });
+    setLoading(true); setError(''); setHasRun(true); setCoverage(null); setShowFailed(false);
+    setProgress({ pct: 3, message: `Querying ${queried.length} accounts…` });
 
     try {
-      // Vercel Hobby plan hard-caps every function at 60s, no matter what
-      // maxDuration says in the route — so a single request covering
-      // hundreds of accounts can time out (HTTP 504). Instead, split each
-      // currency group into smaller chunks and fire them in parallel; each
-      // chunk finishes well under the 60s ceiling, then we merge the
-      // results back together below.
-      const CHUNK_SIZE = 40;
-      const chunk = (arr, size) => {
-        const out = [];
-        for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-        return out;
-      };
-
-      const call = (accs) => {
-        if (accs.length === 0) return Promise.resolve({ accountTotals: [] });
-        const chunks = chunk(accs, CHUNK_SIZE);
-        return Promise.all(chunks.map(c =>
-          fetch('/api/meta/pacing', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ accountIds: c.map(a => a.id), startDate, endDate }),
-          }).then(async r => {
-            if (!r.ok) {
-              const e = await r.json().catch(() => ({}));
-              throw new Error(e.error || `HTTP ${r.status}`);
-            }
-            return r.json();
-          })
-        )).then(results => ({
-          accountTotals: results.flatMap(r => r.accountTotals || []),
-        }));
-      };
-
-      setProgress({ pct: 25, message: 'Querying Meta Marketing API…' });
-      const [usdRes, zarRes] = await Promise.all([call(usdAccs), call(zarAccs)]);
-      setProgress({ pct: 80, message: 'Merging results…' });
-
-      const accMap = new Map(allAccounts.map(a => [String(a.id), a]));
-      const tag = (totals, currency) => totals.map(t => {
-        const a = accMap.get(String(t.accountId)) || {};
-        return {
-          accountId:      String(t.accountId),
-          name:           a.name || `Account ${t.accountId}`,
-          currency,
-          totalSpend:     t.totalSpend     || 0,
-          todaySpend:     t.todaySpend     || 0,
-          yesterdaySpend: t.yesterdaySpend || 0,
-        };
+      const { totals, failed } = await fetchTotalsResilient(queried.map(a => a.id), {
+        startDate, endDate,
+        onProgress: ({ done, total, round }) => setProgress({
+          pct: 5 + Math.round(85 * done / Math.max(1, total)),
+          message: round === 0
+            ? `Loaded ${done} of ${total} accounts…`
+            : `Retrying accounts that failed (pass ${round + 1}) — ${done} of ${total} loaded…`,
+        }),
       });
+      setProgress({ pct: 92, message: 'Merging results…' });
 
-      const merged = [
-        ...tag(usdRes.accountTotals || [], 'USD'),
-        ...tag(zarRes.accountTotals || [], 'ZAR'),
-      ].filter(r => r.totalSpend > 0 || r.todaySpend > 0 || r.yesterdaySpend > 0)
-       .sort((a, b) => b.totalSpend - a.totalSpend);
+      const accById = new Map(queried.map(a => [String(a.id), a]));
+      const merged = [];
+      for (const [id, tot] of totals) {
+        const a = accById.get(id);
+        if (!a) continue;
+        const row = buildRow(a, tot);
+        if (hasSpend(row)) merged.push(row);
+      }
+      merged.sort(bySpend);
 
       setRows(merged);
       setRanDates({ start: startDate, end: endDate });
+      setCoverage({ queried: queried.length, loaded: totals.size, failed: describeFailed(failed, accById), skippedCurrency });
       setLastRefresh(new Date());
       setProgress({
         pct: 100,
-        message: `✓ ${merged.length} accounts with spend · ${merged.filter(r=>r.currency==='USD').length} USD · ${merged.filter(r=>r.currency==='ZAR').length} ZAR`,
+        message: `${failed.length ? '⚠' : '✓'} ${merged.length} accounts with spend · ${totals.size} of ${queried.length} accounts loaded` +
+                 (failed.length ? ` · ${failed.length} failed` : ''),
       });
     } catch (e) {
       setError(e.message || String(e));
     }
     setLoading(false);
+  }
+
+  // Re-ask only for the accounts that failed, for the same dates as the table, and merge in.
+  async function retryFailed() {
+    if (!coverage || !coverage.failed.length) return;
+    setRetrying(true); setError('');
+    try {
+      const ids = coverage.failed.map(f => f.accountId);
+      const { totals, failed } = await fetchTotalsResilient(ids, {
+        startDate: ranDates.start, endDate: ranDates.end,
+        onProgress: ({ done, total }) => setProgress({ pct: 50, message: `Retrying failed accounts — ${done} of ${total} loaded…` }),
+      });
+      const accById = new Map(allAccounts.map(a => [String(a.id), a]));
+      const added = [];
+      for (const [id, tot] of totals) {
+        const a = accById.get(id);
+        if (!a) continue;
+        const row = buildRow(a, tot);
+        if (hasSpend(row)) added.push(row);
+      }
+      setRows(prev => [...prev.filter(r => !totals.has(r.accountId)), ...added].sort(bySpend));
+      setCoverage(c => ({ ...c, loaded: c.loaded + totals.size, failed: describeFailed(failed, accById) }));
+      setProgress({
+        pct: 100,
+        message: failed.length ? `⚠ ${failed.length} accounts still failing` : '✓ All accounts loaded',
+      });
+    } catch (e) {
+      setError(e.message || String(e));
+    }
+    setRetrying(false);
+  }
+
+  // Previous calendar month (relative to the start date), for "vs Last Month" pacing.
+  async function loadLastMonth() {
+    const [y, m] = startDate.split('-').map(Number);
+    const ps = toYMD(new Date(y, m - 2, 1));
+    const pe = toYMD(new Date(y, m - 1, 0));
+    const key = `${ps}_${pe}`;
+    if (lastMonthDaily?.key === key || lastMonthLoading) return;
+    const queried = allAccounts.filter(a => ['USD', 'ZAR'].includes((a.currency || '').toUpperCase()));
+    if (!queried.length) return;
+    setLastMonthLoading(true);
+    try {
+      const { totals } = await fetchTotalsResilient(queried.map(a => a.id), { startDate: ps, endDate: pe });
+      const cur = new Map(queried.map(a => [String(a.id), (a.currency || '').toUpperCase()]));
+      const by = { USD: [], ZAR: [] };
+      for (const [id, tot] of totals) { const c = cur.get(id); if (by[c]) by[c].push(tot); }
+      setLastMonthDaily({ key, USD: sumDaily(by.USD), ZAR: sumDaily(by.ZAR) });
+    } catch (e) { setError(e.message || String(e)); }
+    setLastMonthLoading(false);
   }
 
   // ── View rows: filter by sub-tab, then by search, then convert if Combined ──
@@ -281,11 +656,18 @@ export default function MetaTab() {
     'Combined (ZAR)':  rows.length,
   };
 
+  // Accounts listed per Business Manager (header tooltip) — shows at a glance whether a whole BM is missing
+  const bmSummary = (() => {
+    const m = new Map();
+    allAccounts.forEach(a => { const k = a.bm || '(unknown)'; m.set(k, (m.get(k) || 0) + 1); });
+    return [...m.entries()].sort((x, y) => y[1] - x[1]).map(([k, v]) => `${k}: ${v}`).join('\n');
+  })();
+
   // ── Excel export ──────────────────────────────────────────────────────────
   async function exportToExcel() {
     const XLSX = await loadXLSX();
     const header = ['Account ID', 'Account Name', 'Currency', `Total (${activeTab === 'USD Accounts' ? 'USD' : 'ZAR'})`,
-                    'Yesterday', 'Today', 'DoD %', 'Flagged'];
+                    'Yesterday', 'Today', 'DoD %', 'Flagged', 'Business Manager'];
     const data = [header];
     computed.forEach(r => {
       data.push([
@@ -297,6 +679,7 @@ export default function MetaTab() {
         r.todaySpend,
         r.dod == null ? '' : (isFinite(r.dod) ? r.dod : 'new spend'),
         r.flagged ? 'YES' : '',
+        r.bm || '',
       ]);
     });
     data.push([]);
@@ -306,7 +689,7 @@ export default function MetaTab() {
       portfolioFlagged ? 'YES' : '',
     ]);
     const ws = XLSX.utils.aoa_to_sheet(data);
-    ws['!cols'] = [{wch:14},{wch:40},{wch:14},{wch:16},{wch:14},{wch:14},{wch:12},{wch:10}];
+    ws['!cols'] = [{wch:20},{wch:40},{wch:14},{wch:16},{wch:14},{wch:14},{wch:12},{wch:10},{wch:34}];
     // Number formats
     const range = XLSX.utils.decode_range(ws['!ref']);
     for (let R = 1; R <= range.e.r; R++) {
@@ -319,6 +702,33 @@ export default function MetaTab() {
     }
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `Meta ${activeTab.slice(0,20)}`);
+
+    // Coverage sheets — so a reconciliation can tell "no spend" apart from "not loaded".
+    if (coverage) {
+      const bmStats = new Map();
+      const bump = (bm, k) => {
+        const key = bm || '(unknown)';
+        const s = bmStats.get(key) || { listed: 0, withSpend: 0, failed: 0 };
+        s[k]++; bmStats.set(key, s);
+      };
+      allAccounts.forEach(a => bump(a.bm, 'listed'));
+      rows.forEach(r => bump(r.bm, 'withSpend'));
+      coverage.failed.forEach(f => bump(f.bm, 'failed'));
+      const covData = [['Business Manager', 'Accounts listed', 'With spend in range', 'Failed to load']];
+      [...bmStats.entries()].sort((x, y) => y[1].listed - x[1].listed)
+        .forEach(([bm, s]) => covData.push([bm, s.listed, s.withSpend, s.failed]));
+      const wsCov = XLSX.utils.aoa_to_sheet(covData);
+      wsCov['!cols'] = [{wch:44},{wch:16},{wch:20},{wch:16}];
+      XLSX.utils.book_append_sheet(wb, wsCov, 'Coverage by BM');
+
+      if (coverage.failed.length) {
+        const failData = [['Account ID', 'Account Name', 'Currency', 'Business Manager', 'Error']];
+        coverage.failed.forEach(f => failData.push([f.accountId, f.name, f.currency, f.bm, f.error]));
+        const wsFail = XLSX.utils.aoa_to_sheet(failData);
+        wsFail['!cols'] = [{wch:20},{wch:40},{wch:10},{wch:30},{wch:80}];
+        XLSX.utils.book_append_sheet(wb, wsFail, 'Not loaded');
+      }
+    }
     const tag = activeTab.replace(/[^a-z0-9]/gi, '-');
     XLSX.writeFile(wb, `Meta_${tag}_${startDate}_to_${endDate}.xlsx`);
   }
@@ -346,6 +756,14 @@ export default function MetaTab() {
               </>
             )}
           </span>
+          {!loadingAccs && !accountsError && tokenType && (
+            <span title={`Accounts by Business Manager:\n${bmSummary}`}
+              className={`text-[10px] px-1.5 py-0.5 rounded border cursor-help ${
+                tokenType === 'system_user' ? 'border-slate-600 text-slate-400' : 'border-purple-500 text-purple-300'
+              }`}>
+              {tokenType === 'system_user' ? 'via System User' : 'via Facebook sign-in'}
+            </span>
+          )}
         </div>
 
         <div className="w-px h-5 bg-slate-600" />
@@ -424,6 +842,57 @@ export default function MetaTab() {
         </div>
       )}
 
+      {coverage && (coverage.failed.length > 0 || coverage.skippedCurrency > 0) && (
+        <div className="bg-amber-900/30 border-b border-amber-700 px-4 py-2 text-xs text-amber-100 shrink-0">
+          <div className="flex items-center gap-3 flex-wrap">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            {coverage.failed.length > 0 && (
+              <span>
+                <b>{coverage.failed.length}</b> of {coverage.queried} accounts could not be loaded — totals below are understated.
+              </span>
+            )}
+            {coverage.skippedCurrency > 0 && (
+              <span>{coverage.skippedCurrency} account(s) in a currency other than USD/ZAR were not queried.</span>
+            )}
+            {coverage.failed.length > 0 && (
+              <>
+                <button onClick={retryFailed} disabled={retrying || loading}
+                  className="px-2 py-0.5 bg-amber-700 hover:bg-amber-600 disabled:opacity-50 rounded font-bold text-white">
+                  {retrying ? 'Retrying…' : 'Retry failed'}
+                </button>
+                <button onClick={() => setShowFailed(s => !s)} className="underline text-amber-300 hover:text-amber-200">
+                  {showFailed ? 'Hide details' : 'Show details'}
+                </button>
+              </>
+            )}
+          </div>
+          {showFailed && coverage.failed.length > 0 && (
+            <div className="mt-2 max-h-44 overflow-auto border border-amber-800/60 rounded">
+              <table className="w-full text-[11px]">
+                <thead className="bg-amber-950/60 text-amber-300 text-left sticky top-0">
+                  <tr>
+                    <th className="px-2 py-1 font-semibold">Account</th>
+                    <th className="px-2 py-1 font-semibold">ID</th>
+                    <th className="px-2 py-1 font-semibold">Business Manager</th>
+                    <th className="px-2 py-1 font-semibold">Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {coverage.failed.map(f => (
+                    <tr key={f.accountId} className="border-t border-amber-900/40">
+                      <td className="px-2 py-1 text-amber-50">{f.name || '—'}</td>
+                      <td className="px-2 py-1 font-mono text-amber-200/80">{f.accountId}</td>
+                      <td className="px-2 py-1 text-amber-200/80">{f.bm || '—'}</td>
+                      <td className="px-2 py-1 text-amber-100">{f.error}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ══ PORTFOLIO TOTALS STRIP ══ */}
       {computed.length > 0 && (
         <div className={`border-b border-slate-700 px-4 py-2 flex items-center gap-5 flex-wrap shrink-0 transition-colors ${
@@ -491,6 +960,21 @@ export default function MetaTab() {
           );
         })}
       </div>
+
+      {/* ══ PACING (per currency) ══ */}
+      {hasRun && rows.length > 0 && (activeTab === 'Combined (ZAR)' ? ['USD', 'ZAR'] : [activeTab === 'USD Accounts' ? 'USD' : 'ZAR'])
+        .map(cur => {
+          const curRows = rows.filter(r => r.currency === cur);
+          if (!curRows.length) return null;
+          const [sy, sm] = startDate.split('-').map(Number);
+          const lm = lastMonthDaily && lastMonthDaily.key === `${toYMD(new Date(sy, sm - 2, 1))}_${toYMD(new Date(sy, sm - 1, 0))}`
+            ? lastMonthDaily[cur] : null;
+          return (
+            <PacingPanel key={cur} currency={cur} rows={curRows}
+              startDate={ranDates.start || startDate} endDate={ranDates.end || endDate}
+              lastMonthDaily={lm} lastMonthLoading={lastMonthLoading} onLoadLastMonth={loadLastMonth} />
+          );
+        })}
 
       {/* ══ TABLE ══ */}
       <div className="flex-1 overflow-auto">
