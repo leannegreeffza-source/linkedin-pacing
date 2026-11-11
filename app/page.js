@@ -6,6 +6,7 @@ const BODTab   = dynamic(() => import('./BODTab'),   { ssr: false });
 const BOD2Tab  = dynamic(() => import('./BOD2Tab'),  { ssr: false });
 const KenyaTab = dynamic(() => import('./KenyaTab'), { ssr: false });
 const MetaTab  = dynamic(() => import('./MetaTab'),  { ssr: false });
+const MetaPacingTab = dynamic(() => import('./MetaPacingTab'), { ssr: false });
 import { useSession, signIn, signOut } from 'next-auth/react';
 import { pacingFetch } from '../lib/pacingClient';
 import {
@@ -1985,7 +1986,8 @@ Keep it professional, data-driven, and concise. Use plain text (no markdown).`;
       )}
 
       {/* ── Pacing Tab ── */}
-      {activeTab === 'pacing' && (
+      {activeTab === 'pacing' && platform === 'meta' && <MetaPacingTab />}
+      {activeTab === 'pacing' && platform !== 'meta' && (
       <div className="max-w-screen-xl mx-auto px-6 py-6 grid grid-cols-12 gap-6">
 
         {/* Sidebar */}
