@@ -14,7 +14,7 @@
 //   • Yesterday / day-before count back from the report's end date (or today, whichever is earlier)
 // ════════════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { pacingFetch } from '../lib/pacingClient';
 import {
   RefreshCw, FileSpreadsheet, Upload, Download, AlertTriangle, Search, ChevronDown, ChevronRight, Play, X,
@@ -228,7 +228,7 @@ export default function MetaPacingTab({ __seed } = {}) {
   const [lmLoading, setLmLoading] = useState(false);
   const [error, setError]         = useState('');
   const [showAccounts, setShowAccounts] = useState(false);
-  const [groupBy, setGroupBy]     = useState('currency');              // currency | client | bm | none
+  const [groupBy, setGroupBy]     = useState('auto');                  // auto | currency | client | bm | none
   const [search, setSearch]       = useState('');
   const [collapsed, setCollapsed] = useState(new Set());
   const [showFailed, setShowFailed] = useState(false);
@@ -370,15 +370,16 @@ export default function MetaPacingTab({ __seed } = {}) {
       rs.sort((a, b) => b.p.spend - a.p.spend);
       const budget = rs.reduce((s, r) => s + r.budget, 0);
       const lmDaily = lm ? sumDaily(rs.map(r => ({ daily: scaleDaily(lm.byId.get(r.id) || [], r.f) }))) : null;
-      return { key: k, label: key === 'currency' ? `${k} accounts${view === 'COMB' && k === 'USD' ? ` (shown in R at ${fmtNum(fx)})` : ''}` : k, rows: rs, budget, p: pace({ daily: sumDaily(rs), budget, startDate: ran.start, endDate: ran.end, lmDaily }) };
+      return { key: k, subs: key === 'currency' ? groupsFor(rs, 'client') : null, label: key === 'currency' ? `${k} accounts${view === 'COMB' && k === 'USD' ? ` (shown in R at ${fmtNum(fx)})` : ''}` : k, rows: rs, budget, p: pace({ daily: sumDaily(rs), budget, startDate: ran.start, endDate: ran.end, lmDaily }) };
     }).sort((a, b) => key === 'currency' ? a.key.localeCompare(b.key) : b.p.spend - a.p.spend);
   };
+  const effGroup = groupBy === 'auto' ? (view === 'COMB' ? 'currency' : 'client') : groupBy;
   const clientGroups = useMemo(() => (data ? groupsFor(rows, 'client') : []), [rows, data, lm]);
   const tableGroups = useMemo(() => {
     if (!data) return [];
-    if (groupBy === 'none') return [{ key: '', rows: [...visible].sort((a, b) => b.p.spend - a.p.spend) }];
-    return groupsFor(visible, groupBy);
-  }, [visible, groupBy, data, lm]);
+    if (effGroup === 'none') return [{ key: '', rows: [...visible].sort((a, b) => b.p.spend - a.p.spend) }];
+    return groupsFor(visible, effGroup);
+  }, [visible, effGroup, data, lm]);
 
   // chart series in the view currency
   const chart = useMemo(() => {
@@ -658,7 +659,7 @@ export default function MetaPacingTab({ __seed } = {}) {
               <div className="border-t border-slate-700">
                 <div className="px-4 py-2 flex items-center gap-3 flex-wrap bg-slate-900/40">
                   <select value={groupBy} onChange={e => setGroupBy(e.target.value)} aria-label="Group by" className="px-2 py-1.5 bg-slate-700 border border-slate-600 rounded text-xs text-white">
-                    <option value="currency">Group: USD / ZAR</option><option value="client">Group: client</option><option value="bm">Group: Business Manager</option><option value="none">No grouping</option>
+                    <option value="auto">Group: auto (brands; USD / ZAR first on Combined)</option><option value="currency">Group: USD / ZAR, then brand</option><option value="client">Group: brand</option><option value="bm">Group: Business Manager</option><option value="none">No grouping</option>
                   </select>
                   <div className="relative">
                     <Search className="absolute left-2 top-2 w-3.5 h-3.5 text-slate-400" />
@@ -674,7 +675,7 @@ export default function MetaPacingTab({ __seed } = {}) {
                     <table className="w-full text-xs border-collapse">
                       <thead className="bg-slate-800 sticky top-0 z-10">
                         <tr className="text-slate-400 text-left">
-                          <th className="px-3 py-2 font-semibold">{groupBy === 'bm' ? 'Business Manager / Account' : groupBy === 'client' ? 'Client / Account' : groupBy === 'currency' ? 'Currency / Account' : 'Account'}</th>
+                          <th className="px-3 py-2 font-semibold">{effGroup === 'bm' ? 'Business Manager / Account' : effGroup === 'client' ? 'Brand / Account' : effGroup === 'currency' ? 'Currency / Brand / Account' : 'Account'}</th>
                           <th className="px-3 py-2 font-semibold text-right">Budget</th>
                           <th className="px-3 py-2 font-semibold text-right">Spend</th>
                           <th className="px-3 py-2 font-semibold text-right">% budget</th>
@@ -689,7 +690,7 @@ export default function MetaPacingTab({ __seed } = {}) {
                       </thead>
                       <tbody>
                         {tableGroups.map(g => (
-                          <GroupBlock key={g.key || 'all'} g={g} grouped={groupBy !== 'none'} collapsed={collapsed.has(g.key)} onToggle={() => toggle(g.key)} cells={cells} />
+                          <GroupBlock key={g.key || 'all'} g={g} grouped={effGroup !== 'none'} collapsedSet={collapsed} toggle={toggle} cells={cells} />
                         ))}
                       </tbody>
                       <tfoot className="sticky bottom-0 bg-slate-800 border-t-2 border-slate-600 text-white font-bold">
@@ -746,29 +747,51 @@ export default function MetaPacingTab({ __seed } = {}) {
   );
 }
 
-function GroupBlock({ g, grouped, collapsed, onToggle, cells }) {
+function AccountRow({ r, indent, cells }) {
+  return (
+    <tr className="border-t border-slate-800 hover:bg-slate-800/50">
+      <td className={`py-1.5 pr-3 ${indent}`}>
+        <div className="text-slate-100 truncate max-w-md" title={r.name}>{r.name}</div>
+        <div className="text-[10px] text-slate-500 font-mono">{r.id} · {r.currency}{!r.hasData && <span className="text-amber-500"> · no data</span>}</div>
+      </td>
+      {cells({ p: r.p, budget: r.budget, id: r.id, name: r.name, f: r.f })}
+    </tr>
+  );
+}
+
+function HeaderRow({ g, label, isCollapsed, onToggle, indent, cells, sub }) {
+  return (
+    <tr className={`${sub ? 'bg-slate-800/40' : 'bg-slate-800/80 border-t border-slate-700'} cursor-pointer hover:bg-slate-700/60`} onClick={onToggle}>
+      <td className={`py-2 pr-3 ${indent} ${sub ? 'font-semibold text-slate-100' : 'font-bold text-white'}`}>
+        <span className="inline-flex items-center gap-1.5">
+          {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          {label} <span className="text-slate-500 font-normal">· {g.rows.length}</span>
+        </span>
+      </td>
+      {cells({ p: g.p, budget: g.budget, isGroup: true })}
+    </tr>
+  );
+}
+
+// One group: a header, then either its brand sub-groups (USD / ZAR first) or its accounts
+function GroupBlock({ g, grouped, collapsedSet, toggle, cells }) {
+  if (!grouped) return <>{g.rows.map(r => <AccountRow key={r.id} r={r} indent="pl-3" cells={cells} />)}</>;
+  const open = !collapsedSet.has(g.key);
   return (
     <>
-      {grouped && (
-        <tr className="bg-slate-800/80 border-t border-slate-700 cursor-pointer hover:bg-slate-700/60" onClick={onToggle}>
-          <td className="px-3 py-2 font-bold text-white">
-            <span className="inline-flex items-center gap-1.5">
-              {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              {g.label || g.key || '(none)'} <span className="text-slate-500 font-normal">· {g.rows.length}</span>
-            </span>
-          </td>
-          {cells({ p: g.p, budget: g.budget, isGroup: true })}
-        </tr>
-      )}
-      {!collapsed && g.rows.map(r => (
-        <tr key={r.id} className="border-t border-slate-800 hover:bg-slate-800/50">
-          <td className={`py-1.5 pr-3 ${grouped ? 'pl-9' : 'pl-3'}`}>
-            <div className="text-slate-100 truncate max-w-md" title={r.name}>{r.name}</div>
-            <div className="text-[10px] text-slate-500 font-mono">{r.id} · {r.currency}{!r.hasData && <span className="text-amber-500"> · no data</span>}</div>
-          </td>
-          {cells({ p: r.p, budget: r.budget, id: r.id, name: r.name, f: r.f })}
-        </tr>
-      ))}
+      <HeaderRow g={g} label={g.label || g.key || '(none)'} isCollapsed={!open} onToggle={() => toggle(g.key)} indent="pl-3" cells={cells} />
+      {open && (g.subs
+        ? g.subs.map(s => {
+            const k = `${g.key}/${s.key}`;
+            const sOpen = !collapsedSet.has(k);
+            return (
+              <React.Fragment key={k}>
+                <HeaderRow g={s} label={s.key} isCollapsed={!sOpen} onToggle={() => toggle(k)} indent="pl-8" cells={cells} sub />
+                {sOpen && s.rows.map(r => <AccountRow key={r.id} r={r} indent="pl-14" cells={cells} />)}
+              </React.Fragment>
+            );
+          })
+        : g.rows.map(r => <AccountRow key={r.id} r={r} indent="pl-9" cells={cells} />))}
     </>
   );
 }
