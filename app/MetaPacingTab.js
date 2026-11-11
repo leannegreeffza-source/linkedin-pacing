@@ -228,7 +228,7 @@ export default function MetaPacingTab({ __seed } = {}) {
   const [lmLoading, setLmLoading] = useState(false);
   const [error, setError]         = useState('');
   const [showAccounts, setShowAccounts] = useState(false);
-  const [groupBy, setGroupBy]     = useState('client');                // client | bm | none
+  const [groupBy, setGroupBy]     = useState('currency');              // currency | client | bm | none
   const [search, setSearch]       = useState('');
   const [collapsed, setCollapsed] = useState(new Set());
   const [showFailed, setShowFailed] = useState(false);
@@ -365,13 +365,13 @@ export default function MetaPacingTab({ __seed } = {}) {
 
   const groupsFor = (list, key) => {
     const m = new Map();
-    for (const r of list) { const k = key === 'bm' ? r.bm : r.group; (m.get(k) || m.set(k, []).get(k)).push(r); }
+    for (const r of list) { const k = key === 'bm' ? r.bm : key === 'currency' ? r.currency : r.group; (m.get(k) || m.set(k, []).get(k)).push(r); }
     return [...m.entries()].map(([k, rs]) => {
       rs.sort((a, b) => b.p.spend - a.p.spend);
       const budget = rs.reduce((s, r) => s + r.budget, 0);
       const lmDaily = lm ? sumDaily(rs.map(r => ({ daily: scaleDaily(lm.byId.get(r.id) || [], r.f) }))) : null;
-      return { key: k, rows: rs, budget, p: pace({ daily: sumDaily(rs), budget, startDate: ran.start, endDate: ran.end, lmDaily }) };
-    }).sort((a, b) => b.p.spend - a.p.spend);
+      return { key: k, label: key === 'currency' ? `${k} accounts${view === 'COMB' && k === 'USD' ? ` (shown in R at ${fmtNum(fx)})` : ''}` : k, rows: rs, budget, p: pace({ daily: sumDaily(rs), budget, startDate: ran.start, endDate: ran.end, lmDaily }) };
+    }).sort((a, b) => key === 'currency' ? a.key.localeCompare(b.key) : b.p.spend - a.p.spend);
   };
   const clientGroups = useMemo(() => (data ? groupsFor(rows, 'client') : []), [rows, data, lm]);
   const tableGroups = useMemo(() => {
@@ -658,7 +658,7 @@ export default function MetaPacingTab({ __seed } = {}) {
               <div className="border-t border-slate-700">
                 <div className="px-4 py-2 flex items-center gap-3 flex-wrap bg-slate-900/40">
                   <select value={groupBy} onChange={e => setGroupBy(e.target.value)} aria-label="Group by" className="px-2 py-1.5 bg-slate-700 border border-slate-600 rounded text-xs text-white">
-                    <option value="client">Group: client</option><option value="bm">Group: Business Manager</option><option value="none">No grouping</option>
+                    <option value="currency">Group: USD / ZAR</option><option value="client">Group: client</option><option value="bm">Group: Business Manager</option><option value="none">No grouping</option>
                   </select>
                   <div className="relative">
                     <Search className="absolute left-2 top-2 w-3.5 h-3.5 text-slate-400" />
@@ -674,7 +674,7 @@ export default function MetaPacingTab({ __seed } = {}) {
                     <table className="w-full text-xs border-collapse">
                       <thead className="bg-slate-800 sticky top-0 z-10">
                         <tr className="text-slate-400 text-left">
-                          <th className="px-3 py-2 font-semibold">{groupBy === 'bm' ? 'Business Manager / Account' : groupBy === 'client' ? 'Client / Account' : 'Account'}</th>
+                          <th className="px-3 py-2 font-semibold">{groupBy === 'bm' ? 'Business Manager / Account' : groupBy === 'client' ? 'Client / Account' : groupBy === 'currency' ? 'Currency / Account' : 'Account'}</th>
                           <th className="px-3 py-2 font-semibold text-right">Budget</th>
                           <th className="px-3 py-2 font-semibold text-right">Spend</th>
                           <th className="px-3 py-2 font-semibold text-right">% budget</th>
@@ -754,7 +754,7 @@ function GroupBlock({ g, grouped, collapsed, onToggle, cells }) {
           <td className="px-3 py-2 font-bold text-white">
             <span className="inline-flex items-center gap-1.5">
               {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              {g.key || '(none)'} <span className="text-slate-500 font-normal">· {g.rows.length}</span>
+              {g.label || g.key || '(none)'} <span className="text-slate-500 font-normal">· {g.rows.length}</span>
             </span>
           </td>
           {cells({ p: g.p, budget: g.budget, isGroup: true })}
